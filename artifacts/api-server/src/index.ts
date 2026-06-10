@@ -1,5 +1,8 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { db, usersTable } from "@workspace/db";
+import { isNull, asc } from "drizzle-orm";
+import bcrypt from "bcryptjs";
 
 const rawPort = process.env["PORT"];
 
@@ -15,11 +18,43 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
+async function seedAdminIfNeeded() {
+  try {
+    const usersWithPassword = await db
+      .select({ id: usersTable.id })
+      .from(usersTable)
+      .where(isNull(usersTable.username));
+
+    const allUsers = await db
+      .select({ id: usersTable.id })
+      .from(usersTable);
+
+    if (allUsers.length > 0 && usersWithPassword.length === allUsers.length) {
+      const passwordHash = await bcrypt.hash("admin1", 12);
+      const [oldest] = await db
+        .select({ id: usersTable.id })
+        .from(usersTable)
+        .orderBy(asc(usersTable.createdAt))
+        .limit(1);
+      if (oldest) {
+        await db
+          .update(usersTable)
+          .set({ username: "admin", passwordHash, role: "manager" })
+          .where(isNull(usersTable.username));
+        logger.info("Seeded admin account (username: admin, password: admin1)");
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, "Seed failed — continuing anyway");
+  }
+}
+
+app.listen(port, async (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
   }
 
   logger.info({ port }, "Server listening");
+  await seedAdminIfNeeded();
 });
