@@ -317,7 +317,22 @@ export function InspectionTab() {
         }
 
         setIsImporting(true);
+
+        // Fetch all existing measurements to build a duplicate-detection set.
+        // Key: `${checksheetId}_${timestamp truncated to the second}`.
+        let existingKeys = new Set<string>();
+        try {
+          const existing = await api.get<Measurement[]>("/api/measurements?limit=100000");
+          for (const m of existing) {
+            const sec = Math.floor(new Date(m.timestamp).getTime() / 1000);
+            existingKeys.add(`${m.checksheetId}_${sec}`);
+          }
+        } catch {
+          // If fetch fails, proceed without duplicate detection
+        }
+
         let created = 0;
+        let skipped = 0;
         let failed = 0;
         const errors: string[] = [];
 
@@ -347,6 +362,20 @@ export function InspectionTab() {
             continue;
           }
 
+          const timestamp = timestampRaw ? new Date(timestampRaw) : new Date();
+          if (isNaN(timestamp.getTime())) {
+            errors.push(`Row ${i + 2}: invalid timestamp "${timestampRaw}"`);
+            failed++;
+            continue;
+          }
+
+          // Skip if this record already exists in the database
+          const dupKey = `${checksheet.id}_${Math.floor(timestamp.getTime() / 1000)}`;
+          if (existingKeys.has(dupKey)) {
+            skipped++;
+            continue;
+          }
+
           const measurements: Record<string, number | string | boolean> = {};
           for (const field of checksheet.measurementFields) {
             const rawVal = row[field.fieldName];
@@ -361,13 +390,6 @@ export function InspectionTab() {
             }
           }
 
-          const timestamp = timestampRaw ? new Date(timestampRaw) : new Date();
-          if (isNaN(timestamp.getTime())) {
-            errors.push(`Row ${i + 2}: invalid timestamp "${timestampRaw}"`);
-            failed++;
-            continue;
-          }
-
           try {
             await api.post("/api/measurements", {
               checksheetId: checksheet.id,
@@ -377,6 +399,8 @@ export function InspectionTab() {
               measurements,
               issues: [],
             });
+            // Add the new key so within-file duplicates are also caught
+            existingKeys.add(dupKey);
             created++;
           } catch {
             errors.push(`Row ${i + 2}: server error`);
@@ -391,9 +415,14 @@ export function InspectionTab() {
           console.warn("Inspection import errors:", errors);
         }
 
+        const parts: string[] = [];
+        if (created > 0) parts.push(`${created} imported`);
+        if (skipped > 0) parts.push(`${skipped} skipped (already exist)`);
+        if (failed > 0) parts.push(`${failed} failed`);
+
         toast({
-          title: "Import Complete",
-          description: `${created} record(s) imported${failed ? `, ${failed} failed` : ""}.`,
+          title: created === 0 && skipped > 0 && failed === 0 ? "Nothing New to Import" : "Import Complete",
+          description: parts.join(", ") + ".",
           variant: failed > 0 && created === 0 ? "destructive" : "default",
         });
       },
