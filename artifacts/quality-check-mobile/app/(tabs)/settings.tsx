@@ -20,6 +20,7 @@ export default function SettingsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { user, signOut } = useAuth();
+  const router = useRouter();
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 0);
   const botPad = insets.bottom + (Platform.OS === "web" ? 34 : 0) + 80;
@@ -81,6 +82,34 @@ export default function SettingsScreen() {
           <InfoRow icon="clipboard" label="App" value="Quality Check Mobile" colors={colors} />
           <InfoRow icon="info" label="Version" value="1.0.0" colors={colors} last />
         </View>
+
+        {user?.role === "manager" && (
+          <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>Management</Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.navRow,
+                { borderBottomColor: colors.border, opacity: pressed ? 0.7 : 1 },
+              ]}
+              onPress={() => router.push("/(tabs)/users")}
+            >
+              <Feather name="users" size={16} color={colors.mutedForeground} style={{ width: 22 }} />
+              <Text style={[styles.navLabel, { color: colors.foreground }]}>Manage Users</Text>
+              <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.navRow,
+                { opacity: pressed ? 0.7 : 1 },
+              ]}
+              onPress={() => router.push("/(tabs)/checksheets")}
+            >
+              <Feather name="file-text" size={16} color={colors.mutedForeground} style={{ width: 22 }} />
+              <Text style={[styles.navLabel, { color: colors.foreground }]}>Check Sheets</Text>
+              <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+            </Pressable>
+          </View>
+        )}
 
         <Pressable
           style={({ pressed }) => [
@@ -177,6 +206,14 @@ const styles = StyleSheet.create({
   },
   infoLabel: { fontSize: 15, fontFamily: "Inter_400Regular", width: 70 },
   infoValue: { fontSize: 15, fontFamily: "Inter_500Medium", flex: 1, textAlign: "right" },
+  navRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+    gap: 10,
+    borderBottomWidth: 0,
+  },
+  navLabel: { fontSize: 15, fontFamily: "Inter_500Medium", flex: 1 },
   signOutBtn: {
     flexDirection: "row",
     alignItems: "center",
