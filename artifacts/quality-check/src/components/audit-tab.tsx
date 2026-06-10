@@ -2,8 +2,23 @@ import React from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { format, isPast, parseISO } from "date-fns";
-import { PlusCircle, Loader2, Trash2, FilePenLine, ClipboardCheck, CalendarClock, RefreshCw } from "lucide-react";
+import { format, isPast, parseISO, startOfWeek, isAfter } from "date-fns";
+import {
+  PlusCircle,
+  Loader2,
+  Trash2,
+  FilePenLine,
+  ClipboardCheck,
+  CalendarClock,
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  CheckCircle2,
+  AlertCircle,
+  Clock,
+  ListChecks,
+  Filter,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -124,6 +139,26 @@ function RecurrenceBadge({ recurrence }: { recurrence: Audit["recurrence"] }) {
   );
 }
 
+interface StatCardProps {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  colorClass: string;
+  bgClass: string;
+}
+
+function StatCard({ icon, label, value, colorClass, bgClass }: StatCardProps) {
+  return (
+    <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 ${bgClass}`}>
+      <div className={`shrink-0 ${colorClass}`}>{icon}</div>
+      <div>
+        <p className="text-2xl font-bold leading-none">{value}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
+      </div>
+    </div>
+  );
+}
+
 export function AuditTab() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -142,6 +177,9 @@ export function AuditTab() {
   const [completingChecksheet, setCompletingChecksheet] = React.useState<Checksheet | null>(null);
   const [dynamicSchema, setDynamicSchema] = React.useState(z.object({}));
   const [isSubmittingComplete, setIsSubmittingComplete] = React.useState(false);
+
+  const [historyOpen, setHistoryOpen] = React.useState(true);
+  const [filterAssignee, setFilterAssignee] = React.useState<string>("all");
 
   const form = useForm<z.infer<typeof auditFormSchema>>({
     resolver: zodResolver(auditFormSchema),
@@ -285,18 +323,168 @@ export function AuditTab() {
   const selectedChecksheetId = form.watch("checksheetId");
   const selectedCs = checksheets.find((c) => c.id === Number(selectedChecksheetId));
 
-  const displayAudits = isManager ? audits : audits.filter((a) => {
+  const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+
+  const stats = React.useMemo(() => {
+    const total = audits.length;
+    const pending = audits.filter((a) => a.status === "pending").length;
+    const overdue = audits.filter((a) => a.status === "overdue").length;
+    const completedThisWeek = audits.filter(
+      (a) => a.status === "completed" && a.completedAt && isAfter(new Date(a.completedAt), weekStart)
+    ).length;
+    return { total, pending, overdue, completedThisWeek };
+  }, [audits, weekStart]);
+
+  const baseAudits = isManager ? audits : audits.filter((a) => {
     const isAssignedToMe = a.assigneeId === user?.id;
     const isUnassigned = a.assigneeId === null;
     const isActionable = a.status !== "completed";
-    return (isAssignedToMe) || (isUnassigned && isActionable);
+    return isAssignedToMe || (isUnassigned && isActionable);
   });
 
+  const filteredByAssignee = (isManager && filterAssignee !== "all")
+    ? baseAudits.filter((a) => {
+        if (filterAssignee === "unassigned") return a.assigneeId === null;
+        return a.assigneeId === filterAssignee;
+      })
+    : baseAudits;
+
+  const activeAudits = filteredByAssignee.filter((a) => a.status !== "completed");
+  const completedAudits = filteredByAssignee.filter((a) => a.status === "completed");
+
+  const assigneeOptions = React.useMemo(() => {
+    const seen = new Set<string>();
+    const opts: { id: string; label: string }[] = [];
+    for (const a of audits) {
+      if (a.assigneeId && !seen.has(a.assigneeId)) {
+        seen.add(a.assigneeId);
+        opts.push({ id: a.assigneeId, label: a.assigneeName ?? a.assigneeId });
+      }
+    }
+    return opts;
+  }, [audits]);
+
+  const AuditTableRows = ({ rows }: { rows: Audit[] }) => (
+    <>
+      {rows.map((audit) => {
+        const status = getAuditStatus(audit);
+        return (
+          <TableRow key={audit.id} className={status === "overdue" ? "bg-red-50/50" : ""}>
+            <TableCell className="font-medium">
+              <div className="flex items-center gap-2">
+                {audit.title}
+                <RecurrenceBadge recurrence={audit.recurrence} />
+              </div>
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground">{audit.checksheetName}</TableCell>
+            <TableCell className="text-sm text-muted-foreground">
+              {audit.department} / {audit.machine}
+            </TableCell>
+            {isManager && (
+              <TableCell className="text-sm">
+                {audit.assigneeName ?? <span className="text-muted-foreground italic">Any inspector</span>}
+              </TableCell>
+            )}
+            <TableCell className="text-sm">
+              <div className="flex items-center gap-1">
+                <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
+                {format(new Date(audit.scheduledDate), "dd MMM yyyy HH:mm")}
+              </div>
+            </TableCell>
+            {status === "completed" ? (
+              <TableCell className="text-sm text-muted-foreground">
+                {audit.completedAt ? format(new Date(audit.completedAt), "dd MMM yyyy HH:mm") : "—"}
+              </TableCell>
+            ) : (
+              <TableCell><StatusBadge status={status} /></TableCell>
+            )}
+            <TableCell>
+              <div className="flex gap-1">
+                {status !== "completed" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCompletingAudit(audit)}
+                  >
+                    Complete
+                  </Button>
+                )}
+                {isManager && (
+                  <>
+                    {status !== "completed" && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleOpenEdit(audit)}
+                      >
+                        <FilePenLine className="h-4 w-4" />
+                      </Button>
+                    )}
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete Audit?</AlertDialogTitle>
+                          <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => handleDelete(audit.id)}>Delete</AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </>
+                )}
+              </div>
+            </TableCell>
+          </TableRow>
+        );
+      })}
+    </>
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {isManager && !isLoading && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatCard
+            icon={<ListChecks className="h-5 w-5" />}
+            label="Total Audits"
+            value={stats.total}
+            colorClass="text-primary"
+            bgClass="bg-background"
+          />
+          <StatCard
+            icon={<Clock className="h-5 w-5" />}
+            label="Pending"
+            value={stats.pending}
+            colorClass="text-amber-600"
+            bgClass="bg-amber-50/60"
+          />
+          <StatCard
+            icon={<AlertCircle className="h-5 w-5" />}
+            label="Overdue"
+            value={stats.overdue}
+            colorClass="text-red-600"
+            bgClass="bg-red-50/60"
+          />
+          <StatCard
+            icon={<CheckCircle2 className="h-5 w-5" />}
+            label="Completed This Week"
+            value={stats.completedThisWeek}
+            colorClass="text-green-600"
+            bgClass="bg-green-50/60"
+          />
+        </div>
+      )}
+
       <Card className="shadow-lg">
         <CardHeader>
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start justify-between gap-2 flex-wrap">
             <div>
               <CardTitle className="flex items-center gap-2">
                 <ClipboardCheck className="h-5 w-5" />
@@ -308,12 +496,31 @@ export function AuditTab() {
                   : "View and complete your assigned audit tasks."}
               </CardDescription>
             </div>
-            {isManager && (
-              <Button onClick={handleOpenCreate} size="sm">
-                <PlusCircle className="mr-2 h-4 w-4" />
-                New Audit
-              </Button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {isManager && assigneeOptions.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <Select value={filterAssignee} onValueChange={setFilterAssignee}>
+                    <SelectTrigger className="h-8 text-sm w-44">
+                      <SelectValue placeholder="Filter by assignee" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All assignees</SelectItem>
+                      <SelectItem value="unassigned">Unassigned</SelectItem>
+                      {assigneeOptions.map((opt) => (
+                        <SelectItem key={opt.id} value={opt.id}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {isManager && (
+                <Button onClick={handleOpenCreate} size="sm">
+                  <PlusCircle className="mr-2 h-4 w-4" />
+                  New Audit
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -321,97 +528,79 @@ export function AuditTab() {
             <div className="flex justify-center items-center p-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-          ) : displayAudits.length === 0 ? (
+          ) : activeAudits.length === 0 && completedAudits.length === 0 ? (
             <p className="text-center text-muted-foreground py-12">
               {isManager ? "No audits yet. Create one to get started." : "No audits assigned to you."}
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Check Sheet</TableHead>
-                    <TableHead>Dept / Machine</TableHead>
-                    {isManager && <TableHead>Assigned To</TableHead>}
-                    <TableHead>Due Date</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {displayAudits.map((audit) => {
-                    const status = getAuditStatus(audit);
-                    return (
-                      <TableRow key={audit.id} className={status === "overdue" ? "bg-red-50/50" : ""}>
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
-                            {audit.title}
-                            <RecurrenceBadge recurrence={audit.recurrence} />
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{audit.checksheetName}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {audit.department} / {audit.machine}
-                        </TableCell>
-                        {isManager && (
-                          <TableCell className="text-sm">
-                            {audit.assigneeName ?? <span className="text-muted-foreground italic">Any inspector</span>}
-                          </TableCell>
-                        )}
-                        <TableCell className="text-sm">
-                          <div className="flex items-center gap-1">
-                            <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
-                            {format(new Date(audit.scheduledDate), "dd MMM yyyy HH:mm")}
-                          </div>
-                        </TableCell>
-                        <TableCell><StatusBadge status={status} /></TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            {status !== "completed" && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setCompletingAudit(audit)}
-                              >
-                                Complete
-                              </Button>
-                            )}
-                            {isManager && (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleOpenEdit(audit)}
-                                >
-                                  <FilePenLine className="h-4 w-4" />
-                                </Button>
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>Delete Audit?</AlertDialogTitle>
-                                      <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                      <AlertDialogAction onClick={() => handleDelete(audit.id)}>Delete</AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              </>
-                            )}
-                          </div>
-                        </TableCell>
+            <div className="space-y-6">
+              {activeAudits.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Title</TableHead>
+                        <TableHead>Check Sheet</TableHead>
+                        <TableHead>Dept / Machine</TableHead>
+                        {isManager && <TableHead>Assigned To</TableHead>}
+                        <TableHead>Due Date</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                    </TableHeader>
+                    <TableBody>
+                      <AuditTableRows rows={activeAudits} />
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No active audits.
+                </p>
+              )}
+
+              {completedAudits.length > 0 && (
+                <div className="border rounded-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOpen((v) => !v)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-muted/40 hover:bg-muted/60 transition-colors text-sm font-medium"
+                  >
+                    <span className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      Completion History
+                      <Badge variant="secondary" className="font-normal">
+                        {completedAudits.length}
+                      </Badge>
+                    </span>
+                    {historyOpen ? (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </button>
+                  {historyOpen && (
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/20">
+                            <TableHead>Title</TableHead>
+                            <TableHead>Check Sheet</TableHead>
+                            <TableHead>Dept / Machine</TableHead>
+                            {isManager && <TableHead>Completed By</TableHead>}
+                            <TableHead>Due Date</TableHead>
+                            <TableHead>Completed At</TableHead>
+                            <TableHead>Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          <AuditTableRows rows={completedAudits} />
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </CardContent>
