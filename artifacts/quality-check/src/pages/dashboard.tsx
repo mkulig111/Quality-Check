@@ -5,39 +5,22 @@ import { SpcTab } from "@/components/spc-tab";
 import { InspectionTab } from "@/components/inspection-tab";
 import { ChecksheetTab } from "@/components/checksheet-tab";
 import { ExportTab } from "@/components/export-tab";
-import { useLocation, useSearch } from "wouter";
-import { useAuthState } from "react-firebase-hooks/auth";
-import { auth, firestore } from "@/lib/firebase";
-import { doc, getDoc } from "firebase/firestore";
+import { useLocation } from "wouter";
 import { Header } from "@/components/header";
 import { Loader2 } from "lucide-react";
+import { useAuth } from "@workspace/replit-auth-web";
 
-function DashboardTabs({ initialRole }: { initialRole: string | null }) {
+function DashboardTabs() {
   const [, navigate] = useLocation();
-  const [user, loading] = useAuthState(auth);
-  const [role, setRole] = React.useState(initialRole);
+  const { user, isLoading } = useAuth();
 
   React.useEffect(() => {
-    if (loading) return;
-    if (!user) {
+    if (!isLoading && !user) {
       navigate("/");
-      return;
     }
+  }, [user, isLoading, navigate]);
 
-    if (user && !role) {
-      const userDocRef = doc(firestore, "users", user.uid);
-      getDoc(userDocRef).then((userDoc) => {
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          setRole(userData.role);
-        } else {
-          navigate("/");
-        }
-      });
-    }
-  }, [user, loading, role, navigate]);
-
-  if (loading || !role) {
+  if (isLoading || !user) {
     return (
       <div className="flex justify-center items-center p-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -45,6 +28,7 @@ function DashboardTabs({ initialRole }: { initialRole: string | null }) {
     );
   }
 
+  const role = user.role ?? "inspector";
   const defaultTab = role === "manager" ? "users" : "inspection";
 
   return (
@@ -94,16 +78,12 @@ function DashboardTabs({ initialRole }: { initialRole: string | null }) {
 }
 
 export default function DashboardPage() {
-  const search = useSearch();
-  const params = new URLSearchParams(search);
-  const role = params.get("role");
-
   return (
     <div className="relative flex min-h-screen flex-col">
       <Header />
       <main className="flex-1">
         <div className="container py-8">
-          <DashboardTabs initialRole={role} />
+          <DashboardTabs />
         </div>
       </main>
     </div>

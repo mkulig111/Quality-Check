@@ -2,8 +2,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import React from "react";
-import { Loader2, ChevronsRight, FilePenLine, Trash2, History, Check, X } from "lucide-react";
-import { formatDistanceToNow, addMinutes } from "date-fns";
+import { Loader2, ChevronsRight, FilePenLine, Trash2, History } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,18 +37,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { auth, firestore } from "@/lib/firebase";
-import { addDoc, collection, query, orderBy, serverTimestamp, Timestamp, doc, deleteDoc, updateDoc, getDocs, where, writeBatch, limit, onSnapshot } from "firebase/firestore";
-import { useAuthState } from "react-firebase-hooks/auth";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
-
-const formSchema = z.object({}).optional();
+import { api } from "@/lib/api";
 
 interface Checksheet {
-  id: string;
+  id: number;
   itemName: string;
   department: string;
   machine: string;
@@ -62,17 +56,15 @@ interface Checksheet {
 }
 
 interface Measurement {
-  id: string;
-  date: string;
-  time: string;
+  id: number;
   inspector: string;
-  timestamp: Timestamp;
-  checksheetId: string;
+  checksheetId: number;
   checksheetName: string;
   department: string;
   machine: string;
   measurements: Record<string, number | string | boolean>;
   issues: string[];
+  timestamp: string;
 }
 
 const machineOptionsByDepartment: Record<string, string[]> = {
@@ -82,15 +74,15 @@ const machineOptionsByDepartment: Record<string, string[]> = {
   Assembly: ["Compbase", "Bottom Plate", "Plate Rear", "Reinforce 1", "Renforce 2", "Duct Connector", "Dispenser Welding"],
 };
 
-const RECENT_MEASUREMENTS_CAP = 100;
 const HISTORY_LIMIT = 10;
+const POLL_INTERVAL_MS = 10000;
 
 export function InspectionTab() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = React.useState(false);
   const [isFetchingChecksheets, setIsFetchingChecksheets] = React.useState(true);
   const [measurementHistory, setMeasurementHistory] = React.useState<Measurement[]>([]);
-  const [user] = useAuthState(auth);
+  const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);
 
   const [departments] = React.useState(["Stamping", "Injection", "Assembly", "Extrusion"]);
   const [allChecksheets, setAllChecksheets] = React.useState<Checksheet[]>([]);
@@ -104,7 +96,6 @@ export function InspectionTab() {
   const [machineChecksheets, setMachineChecksheets] = React.useState<Checksheet[]>([]);
 
   const [dynamicFormSchema, setDynamicFormSchema] = React.useState(z.object({}));
-  const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);
   const [isConfirmOpen, setIsConfirmOpen] = React.useState(false);
   const [formDataForConfirm, setFormDataForConfirm] = React.useState<any>(null);
 
@@ -116,30 +107,35 @@ export function InspectionTab() {
   const fetchAllChecksheets = React.useCallback(async () => {
     setIsFetchingChecksheets(true);
     try {
-      const q = query(collection(firestore, "checksheets"));
-      const querySnapshot = await getDocs(q);
-      const sheets: Checksheet[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        sheets.push({
-          id: doc.id,
-          itemName: data.itemName,
-          department: data.department,
-          machine: data.machine,
-          measurementFields: data.measurementFields,
-        });
-      });
+      const sheets = await api.get<Checksheet[]>("/api/checksheets");
       setAllChecksheets(sheets);
-    } catch (error) {
+    } catch {
       toast({ title: "Error", description: "Could not fetch check sheets.", variant: "destructive" });
     } finally {
       setIsFetchingChecksheets(false);
     }
   }, [toast]);
 
+  const fetchHistory = React.useCallback(async () => {
+    try {
+      const data = await api.get<Measurement[]>(`/api/measurements?limit=${HISTORY_LIMIT}`);
+      setMeasurementHistory(data);
+    } catch {
+      // silently fail for polling
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, []);
+
   React.useEffect(() => {
     fetchAllChecksheets();
   }, [fetchAllChecksheets]);
+
+  React.useEffect(() => {
+    fetchHistory();
+    const interval = setInterval(fetchHistory, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [fetchHistory]);
 
   const handleDepartmentSelect = (department: string) => {
     setSelectedDepartment(department);
@@ -164,7 +160,6 @@ export function InspectionTab() {
     if (selectedChecksheet) {
       const shape: { [key: string]: any } = {};
       const defaultValues: { [key: string]: any } = {};
-
       selectedChecksheet.measurementFields.forEach((field) => {
         switch (field.fieldType) {
           case "Numeric":
@@ -184,8 +179,7 @@ export function InspectionTab() {
             break;
         }
       });
-      const newSchema = z.object(shape);
-      setDynamicFormSchema(newSchema);
+      setDynamicFormSchema(z.object(shape));
       if (!editingMeasurement) {
         form.reset(defaultValues);
       }
@@ -195,146 +189,53 @@ export function InspectionTab() {
     }
   }, [selectedChecksheet, form, editingMeasurement]);
 
-  React.useEffect(() => {
-    setIsLoadingHistory(true);
-    const recentMeasurementsRef = collection(firestore, "recent_measurements");
-    const q = query(recentMeasurementsRef, orderBy("timestamp", "desc"), limit(HISTORY_LIMIT));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (querySnapshot) => {
-        const history: Measurement[] = [];
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          const timestamp = data.timestamp as Timestamp;
-          history.push({
-            id: doc.id,
-            date: timestamp?.toDate().toLocaleDateString() || "",
-            time: timestamp?.toDate().toLocaleTimeString() || "",
-            inspector: data.inspector,
-            checksheetId: data.checksheetId,
-            checksheetName: data.checksheetName,
-            department: data.department,
-            machine: data.machine,
-            measurements: data.measurements,
-            issues: data.issues || [],
-            timestamp: timestamp,
-          });
-        });
-        setMeasurementHistory(history);
-        setIsLoadingHistory(false);
-      },
-      (error) => {
-        console.error("Error fetching real-time history:", error);
-        toast({ title: "Error", description: "Could not fetch measurement history.", variant: "destructive" });
-        setIsLoadingHistory(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [toast]);
-
   async function handleOpenConfirm(values: any) {
     if (!selectedChecksheet) return;
     setFormDataForConfirm(values);
     setIsConfirmOpen(true);
   }
 
-  const addMeasurementToDb = async (values: any, issues: string[]) => {
-    if (!user || !selectedChecksheet) return;
-
-    const payload = {
-      inspector: user.email,
-      checksheetId: selectedChecksheet.id,
-      checksheetName: selectedChecksheet.itemName,
-      department: selectedChecksheet.department,
-      machine: selectedChecksheet.machine,
-      measurements: values,
-      issues: issues,
-      timestamp: serverTimestamp(),
-    };
-
-    const batch = writeBatch(firestore);
-    const mainDocRef = doc(collection(firestore, "measurements"));
-    batch.set(mainDocRef, payload);
-    const recentDocRef = doc(collection(firestore, "recent_measurements"), mainDocRef.id);
-    batch.set(recentDocRef, payload);
-    await batch.commit();
-
-    const recentMeasurementsRef = collection(firestore, "recent_measurements");
-    const countQuery = query(recentMeasurementsRef, orderBy("timestamp", "desc"));
-    const snapshot = await getDocs(countQuery);
-
-    if (snapshot.size > RECENT_MEASUREMENTS_CAP) {
-      const pruneBatch = writeBatch(firestore);
-      const docsToDelete = snapshot.docs.slice(RECENT_MEASUREMENTS_CAP);
-      docsToDelete.forEach((docToDelete) => pruneBatch.delete(docToDelete.ref));
-      await pruneBatch.commit();
-    }
-  };
-
-  const updateMeasurementInDb = async (id: string, values: any, issues: string[]) => {
-    if (!user || !selectedChecksheet || !editingMeasurement) return;
-
-    const updatedPayload = {
-      inspector: editingMeasurement.inspector,
-      checksheetId: editingMeasurement.checksheetId,
-      checksheetName: editingMeasurement.checksheetName,
-      department: editingMeasurement.department,
-      machine: editingMeasurement.machine,
-      measurements: values,
-      issues: issues,
-      timestamp: editingMeasurement.timestamp,
-    };
-
-    const batch = writeBatch(firestore);
-    const mainDocRef = doc(firestore, "measurements", id);
-    batch.update(mainDocRef, updatedPayload);
-    const recentDocRef = doc(firestore, "recent_measurements", id);
-    batch.update(recentDocRef, updatedPayload);
-    await batch.commit();
-  };
-
   const handleConfirmSubmit = React.useCallback(async () => {
-    if (!formDataForConfirm) return;
+    if (!formDataForConfirm || !selectedChecksheet) return;
     setIsLoading(true);
     setIsConfirmOpen(false);
 
     try {
       if (editingMeasurement) {
-        await updateMeasurementInDb(editingMeasurement.id, formDataForConfirm, []);
+        await api.put(`/api/measurements/${editingMeasurement.id}`, {
+          measurements: formDataForConfirm,
+          issues: [],
+        });
       } else {
-        await addMeasurementToDb(formDataForConfirm, []);
+        await api.post("/api/measurements", {
+          checksheetId: selectedChecksheet.id,
+          checksheetName: selectedChecksheet.itemName,
+          department: selectedChecksheet.department,
+          machine: selectedChecksheet.machine,
+          measurements: formDataForConfirm,
+          issues: [],
+        });
       }
       toast({
         title: editingMeasurement ? "Measurement Updated" : "Measurement Submitted",
         description: "Your measurement has been successfully recorded.",
       });
-
+      await fetchHistory();
       handleCancelEdit();
-    } catch (error) {
-      toast({
-        title: "Submission Failed",
-        description: "An unexpected error occurred.",
-        variant: "destructive",
-      });
-      console.error("DB Error:", error);
+    } catch {
+      toast({ title: "Submission Failed", description: "An unexpected error occurred.", variant: "destructive" });
     } finally {
       setIsLoading(false);
       setFormDataForConfirm(null);
     }
-  }, [formDataForConfirm, editingMeasurement, toast]);
+  }, [formDataForConfirm, editingMeasurement, selectedChecksheet, toast, fetchHistory]);
 
-  const handleDelete = async (measurementId: string) => {
+  const handleDelete = async (measurementId: number) => {
     try {
-      const batch = writeBatch(firestore);
-      const mainDocRef = doc(firestore, "measurements", measurementId);
-      batch.delete(mainDocRef);
-      const recentDocRef = doc(firestore, "recent_measurements", measurementId);
-      batch.delete(recentDocRef);
-      await batch.commit();
+      await api.delete(`/api/measurements/${measurementId}`);
       toast({ title: "Measurement Deleted", description: "Successfully deleted record." });
-    } catch (error) {
+      await fetchHistory();
+    } catch {
       toast({ title: "Delete Failed", description: "Could not delete measurement.", variant: "destructive" });
     }
   };
@@ -390,9 +291,7 @@ export function InspectionTab() {
                       key={dep}
                       type="button"
                       variant={selectedDepartment === dep ? "default" : "outline"}
-                      onClick={() => {
-                        if (!editingMeasurement) handleDepartmentSelect(dep);
-                      }}
+                      onClick={() => { if (!editingMeasurement) handleDepartmentSelect(dep); }}
                       disabled={!!editingMeasurement || isFetchingChecksheets}
                     >
                       {dep}
@@ -410,9 +309,7 @@ export function InspectionTab() {
                         key={machine}
                         type="button"
                         variant={selectedMachine === machine ? "default" : "outline"}
-                        onClick={() => {
-                          if (!editingMeasurement) handleMachineSelect(machine);
-                        }}
+                        onClick={() => { if (!editingMeasurement) handleMachineSelect(machine); }}
                         disabled={!!editingMeasurement}
                         className="w-full"
                       >
@@ -437,9 +334,7 @@ export function InspectionTab() {
                           key={sheet.id}
                           type="button"
                           variant={selectedChecksheet?.id === sheet.id ? "default" : "outline"}
-                          onClick={() => {
-                            if (!editingMeasurement) setSelectedChecksheet(sheet);
-                          }}
+                          onClick={() => { if (!editingMeasurement) setSelectedChecksheet(sheet); }}
                           disabled={!!editingMeasurement}
                           className="w-full"
                         >
@@ -490,13 +385,11 @@ export function InspectionTab() {
                             />
                           )}
                         </FormControl>
-                        {field.fieldType === "Numeric" &&
-                          field.lsl !== undefined &&
-                          field.usl !== undefined && (
-                            <FormDescription>
-                              Standard: {field.lsl} - {field.usl}
-                            </FormDescription>
-                          )}
+                        {field.fieldType === "Numeric" && field.lsl !== undefined && field.usl !== undefined && (
+                          <FormDescription>
+                            Standard: {field.lsl} - {field.usl}
+                          </FormDescription>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -584,28 +477,21 @@ export function InspectionTab() {
                 {measurementHistory.map((measurement) => (
                   <TableRow key={measurement.id}>
                     <TableCell className="text-sm text-muted-foreground">
-                      {measurement.timestamp
-                        ? formatDistanceToNow(measurement.timestamp.toDate(), { addSuffix: true })
-                        : "Unknown"}
+                      {formatDistanceToNow(new Date(measurement.timestamp), { addSuffix: true })}
                     </TableCell>
                     <TableCell className="font-medium">{measurement.checksheetName}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{measurement.department}</Badge>
-                      <span className="ml-1 text-xs text-muted-foreground">{measurement.machine}</span>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {measurement.department} / {measurement.machine}
                     </TableCell>
-                    <TableCell>{measurement.inspector}</TableCell>
+                    <TableCell className="text-sm">{measurement.inspector}</TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1">
                         <Button variant="ghost" size="icon" onClick={() => handleEdit(measurement)}>
                           <FilePenLine className="h-4 w-4" />
                         </Button>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive hover:text-destructive"
-                            >
+                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </AlertDialogTrigger>
@@ -613,14 +499,12 @@ export function InspectionTab() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>Delete Measurement?</AlertDialogTitle>
                               <AlertDialogDescription>
-                                This action cannot be undone.
+                                This cannot be undone.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleDelete(measurement.id)}>
-                                Delete
-                              </AlertDialogAction>
+                              <AlertDialogAction onClick={() => handleDelete(measurement.id)}>Delete</AlertDialogAction>
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>

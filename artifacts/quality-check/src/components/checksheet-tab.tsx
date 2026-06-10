@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -37,8 +36,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
-import { firestore } from "@/lib/firebase";
-import { collection, addDoc, query, serverTimestamp, doc, deleteDoc, updateDoc, getDocs } from "firebase/firestore";
+import { api } from "@/lib/api";
 
 const measurementFieldSchema = z.object({
   fieldName: z.string().min(1, "Field name is required."),
@@ -57,7 +55,7 @@ const formSchema = z.object({
 });
 
 interface Checksheet {
-  id: string;
+  id: number;
   itemName: string;
   department: string;
   machine: string;
@@ -84,7 +82,7 @@ export function ChecksheetTab() {
   const [departmentChecksheets, setDepartmentChecksheets] = React.useState<Checksheet[]>([]);
   const [isFetchingSheets, setIsFetchingSheets] = React.useState(true);
 
-  const [editingSheetId, setEditingSheetId] = React.useState<string | null>(null);
+  const [editingSheetId, setEditingSheetId] = React.useState<number | null>(null);
   const [selectedDepartment, setSelectedDepartment] = React.useState<string | null>(null);
   const [machineOptions, setMachineOptions] = React.useState<string[]>([]);
   const departments = ["Stamping", "Injection", "Assembly", "Extrusion"];
@@ -92,21 +90,9 @@ export function ChecksheetTab() {
   const fetchAllChecksheets = React.useCallback(async () => {
     setIsFetchingSheets(true);
     try {
-      const q = query(collection(firestore, "checksheets"));
-      const querySnapshot = await getDocs(q);
-      const sheets: Checksheet[] = [];
-      querySnapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        sheets.push({
-          id: docSnap.id,
-          itemName: data.itemName,
-          department: data.department,
-          machine: data.machine,
-          measurementFields: data.measurementFields,
-        });
-      });
+      const sheets = await api.get<Checksheet[]>("/api/checksheets");
       setAllChecksheets(sheets);
-    } catch (error) {
+    } catch {
       toast({ title: "Error", description: "Could not fetch check sheets.", variant: "destructive" });
     } finally {
       setIsFetchingSheets(false);
@@ -153,23 +139,13 @@ export function ChecksheetTab() {
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
     try {
-      if (editingSheetId) {
-        const docRef = doc(firestore, "checksheets", editingSheetId);
-        await updateDoc(docRef, values);
-        toast({
-          title: "Check Sheet Updated",
-          description: `Successfully updated check sheet for ${values.itemName}.`,
-        });
+      if (editingSheetId !== null) {
+        await api.put(`/api/checksheets/${editingSheetId}`, values);
+        toast({ title: "Check Sheet Updated", description: `Successfully updated check sheet for ${values.itemName}.` });
         setEditingSheetId(null);
       } else {
-        await addDoc(collection(firestore, "checksheets"), {
-          ...values,
-          createdAt: serverTimestamp(),
-        });
-        toast({
-          title: "Check Sheet Created",
-          description: `Successfully created check sheet for ${values.itemName}.`,
-        });
+        await api.post("/api/checksheets", values);
+        toast({ title: "Check Sheet Created", description: `Successfully created check sheet for ${values.itemName}.` });
       }
       await fetchAllChecksheets();
       if (selectedDepartment) {
@@ -183,9 +159,9 @@ export function ChecksheetTab() {
           { fieldName: "", fieldType: "Numeric", unit: "", lsl: undefined, usl: undefined, isSpecialCharacteristic: false },
         ],
       });
-    } catch (error) {
+    } catch {
       toast({
-        title: `Error ${editingSheetId ? "Updating" : "Creating"} Check Sheet`,
+        title: `Error ${editingSheetId !== null ? "Updating" : "Creating"} Check Sheet`,
         description: "An unexpected error occurred.",
         variant: "destructive",
       });
@@ -216,13 +192,13 @@ export function ChecksheetTab() {
 
   const handleDelete = async (sheet: Checksheet) => {
     try {
-      await deleteDoc(doc(firestore, "checksheets", sheet.id));
+      await api.delete(`/api/checksheets/${sheet.id}`);
       toast({ title: "Check Sheet Deleted", description: "Successfully deleted check sheet." });
       await fetchAllChecksheets();
       if (selectedDepartment) {
         handleDepartmentSelect(selectedDepartment);
       }
-    } catch (error) {
+    } catch {
       toast({ title: "Error Deleting Check Sheet", description: "An unexpected error occurred.", variant: "destructive" });
     }
   };
@@ -231,9 +207,9 @@ export function ChecksheetTab() {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 justify-center">
       <Card className="shadow-lg w-full">
         <CardHeader>
-          <CardTitle>{editingSheetId ? "Edit Check Sheet" : "Create New Check Sheet"}</CardTitle>
+          <CardTitle>{editingSheetId !== null ? "Edit Check Sheet" : "Create New Check Sheet"}</CardTitle>
           <CardDescription>
-            {editingSheetId
+            {editingSheetId !== null
               ? "Modify the details of the existing check sheet."
               : "Define a new item and its measurement parameters."}
           </CardDescription>
@@ -268,9 +244,7 @@ export function ChecksheetTab() {
                       </FormControl>
                       <SelectContent>
                         {departments.map((dep) => (
-                          <SelectItem key={dep} value={dep}>
-                            {dep}
-                          </SelectItem>
+                          <SelectItem key={dep} value={dep}>{dep}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -278,7 +252,6 @@ export function ChecksheetTab() {
                   </FormItem>
                 )}
               />
-
               <FormField
                 control={form.control}
                 name="machine"
@@ -293,9 +266,7 @@ export function ChecksheetTab() {
                       </FormControl>
                       <SelectContent>
                         {machineOptions.map((machine) => (
-                          <SelectItem key={machine} value={machine}>
-                            {machine}
-                          </SelectItem>
+                          <SelectItem key={machine} value={machine}>{machine}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -303,7 +274,6 @@ export function ChecksheetTab() {
                   </FormItem>
                 )}
               />
-
               <div>
                 <h3 className="text-lg font-medium mb-2">Measurement Fields</h3>
                 <div className="space-y-4">
@@ -341,9 +311,7 @@ export function ChecksheetTab() {
                               <FormLabel>Field Type</FormLabel>
                               <Select onValueChange={field.onChange} defaultValue={field.value}>
                                 <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
                                   <SelectItem value="Numeric">Numeric</SelectItem>
@@ -428,16 +396,7 @@ export function ChecksheetTab() {
                   variant="outline"
                   size="sm"
                   className="mt-4"
-                  onClick={() =>
-                    append({
-                      fieldName: "",
-                      fieldType: "Numeric",
-                      unit: "",
-                      lsl: undefined,
-                      usl: undefined,
-                      isSpecialCharacteristic: false,
-                    })
-                  }
+                  onClick={() => append({ fieldName: "", fieldType: "Numeric", unit: "", lsl: undefined, usl: undefined, isSpecialCharacteristic: false })}
                 >
                   <PlusCircle className="mr-2 h-4 w-4" /> Add Field
                 </Button>
@@ -449,9 +408,9 @@ export function ChecksheetTab() {
               </div>
               <div className="flex gap-2">
                 <Button type="submit" className="w-full">
-                  {editingSheetId ? "Update Sheet" : "Create Sheet"}
+                  {editingSheetId !== null ? "Update Sheet" : "Create Sheet"}
                 </Button>
-                {editingSheetId && (
+                {editingSheetId !== null && (
                   <Button type="button" variant="outline" className="w-full" onClick={handleCancelEdit}>
                     Cancel
                   </Button>
@@ -528,11 +487,7 @@ export function ChecksheetTab() {
                       </Button>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive hover:text-destructive"
-                          >
+                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </AlertDialogTrigger>

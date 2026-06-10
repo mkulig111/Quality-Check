@@ -1,1 +1,3 @@
-- [Quality Check Firebase migration](quality-check-migration.md) — Genkit server-side flows replaced with direct Firestore queries in the Vite client
+- [Vite workspace lib resolution](vite-workspace-lib.md) — non-composite libs need Vite alias + fs.allow; removing tsconfig reference avoids composite/noEmit conflict
+- [AuthUser type location](authuser-type.md) — AuthUser must be defined in lib/api-zod/src/index.ts (not generated); used by api-server and replit-auth-web
+- [Session role field](session-role.md) — req.user.role requires role in sessionData.user at login time (auth.ts callback)

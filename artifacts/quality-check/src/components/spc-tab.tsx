@@ -8,19 +8,7 @@ import { Calendar as CalendarIcon, Database, BarChart2, Trash2, Loader2 } from "
 import { DateRange } from "react-day-picker";
 import { format } from "date-fns";
 import { SpcAnalysisCharts } from "@/components/spc-analysis-charts";
-import { firestore } from "@/lib/firebase";
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  Timestamp,
-  orderBy,
-  limit,
-  addDoc,
-  serverTimestamp,
-  writeBatch,
-} from "firebase/firestore";
+import { api } from "@/lib/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -30,14 +18,14 @@ interface SpcOption {
   id: string;
   label: string;
   checksheetId: string;
-  checksheetDocId: string;
+  checksheetNumId: number;
   fieldName: string;
   lsl?: number;
   usl?: number;
 }
 
 interface Checksheet {
-  id: string;
+  id: number;
   itemName: string;
   department: string;
   measurementFields: {
@@ -52,6 +40,17 @@ interface MeasurementData {
   values: number[];
   lsl?: number;
   usl?: number;
+}
+
+interface Measurement {
+  id: number;
+  checksheetName: string;
+  department: string;
+  measurements: Record<string, any>;
+  timestamp: string;
+  inspector: string;
+  checksheetId: number;
+  machine: string;
 }
 
 const DEPARTMENTS = ["Stamping", "Injection", "Assembly", "Extrusion"];
@@ -87,20 +86,9 @@ export function SpcTab() {
 
     setIsFetching(true);
     try {
-      const q = query(collection(firestore, "checksheets"), where("department", "==", department));
-      const querySnapshot = await getDocs(q);
-      const sheets: Checksheet[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        sheets.push({
-          id: doc.id,
-          itemName: data.itemName,
-          department: data.department,
-          measurementFields: data.measurementFields,
-        });
-      });
+      const sheets = await api.get<Checksheet[]>(`/api/checksheets?department=${encodeURIComponent(department)}`);
       setDepartmentChecksheets(sheets);
-    } catch (error) {
+    } catch {
       toast({ title: "Error", description: "Could not fetch checksheets.", variant: "destructive" });
     } finally {
       setIsFetching(false);
@@ -118,9 +106,9 @@ export function SpcTab() {
         if (field.isSpecialCharacteristic) {
           options.push({
             id: `${item.id}::${field.fieldName}`,
-            label: `${field.fieldName}`,
+            label: field.fieldName,
             checksheetId: item.itemName,
-            checksheetDocId: item.id,
+            checksheetNumId: item.id,
             fieldName: field.fieldName,
             lsl: field.lsl,
             usl: field.usl,
@@ -146,30 +134,20 @@ export function SpcTab() {
     setShowCharts(false);
 
     const selectedOption = spcOptions.find((o) => o.id === selectedSpcOption);
-    if (!selectedOption) {
-      setIsLoading(false);
-      return;
-    }
+    if (!selectedOption) { setIsLoading(false); return; }
 
     try {
-      const pointsToFetch = parseInt(numberOfPoints);
+      const pointsToFetch = parseInt(numberOfPoints) * 2;
+      const startDate = date.from.toISOString();
+      const endDate = (date.to ?? date.from).toISOString();
 
-      const q = query(
-        collection(firestore, "measurements"),
-        where("checksheetName", "==", selectedOption.checksheetId),
-        where("department", "==", selectedDepartment),
-        where("timestamp", ">=", Timestamp.fromDate(date.from)),
-        where("timestamp", "<=", Timestamp.fromDate(date.to ?? date.from)),
-        orderBy("timestamp", "desc"),
-        limit(pointsToFetch * 2)
+      const measurements = await api.get<Measurement[]>(
+        `/api/measurements?checksheetName=${encodeURIComponent(selectedOption.checksheetId)}&department=${encodeURIComponent(selectedDepartment)}&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&limit=${pointsToFetch}`
       );
 
-      const querySnapshot = await getDocs(q);
       const values: number[] = [];
-
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        const val = data.measurements?.[selectedOption.fieldName];
+      measurements.forEach((m) => {
+        const val = m.measurements?.[selectedOption.fieldName];
         if (val !== undefined && !isNaN(Number(val))) {
           values.push(Number(val));
         }
@@ -177,9 +155,10 @@ export function SpcTab() {
 
       setAvailableData(values.length);
 
-      if (values.length >= pointsToFetch) {
+      const needed = parseInt(numberOfPoints);
+      if (values.length >= needed) {
         setSpcData({
-          values: values.slice(0, pointsToFetch).reverse(),
+          values: values.slice(0, needed).reverse(),
           lsl: selectedOption.lsl,
           usl: selectedOption.usl,
         });
@@ -189,7 +168,6 @@ export function SpcTab() {
         setShowCharts(false);
       }
     } catch (error: any) {
-      console.error("SPC Analysis Error:", error);
       toast({ title: "Analysis Failed", description: error.message, variant: "destructive" });
       setShowCharts(false);
       setSpcData(null);
@@ -210,36 +188,28 @@ export function SpcTab() {
 
   const handleSeedData = async () => {
     setIsSeeding(true);
-
     try {
-      const checksheetQuery = query(
-        collection(firestore, "checksheets"),
-        where("department", "==", selectedDepartment || DEPARTMENTS[0]),
-        limit(1)
+      const sheets = await api.get<Checksheet[]>(
+        `/api/checksheets?department=${encodeURIComponent(selectedDepartment || DEPARTMENTS[0])}`
       );
-      const querySnapshot = await getDocs(checksheetQuery);
 
-      if (querySnapshot.empty) {
+      if (sheets.length === 0) {
         toast({
           title: "Seeding Failed",
           description: "No checksheet found for the selected department. Please create one first.",
           variant: "destructive",
         });
-        setIsSeeding(false);
         return;
       }
 
-      const checksheetDoc = querySnapshot.docs[0];
-      const checksheet = { id: checksheetDoc.id, ...checksheetDoc.data() } as any;
-
-      const specialField = checksheet.measurementFields?.find((f: any) => f.isSpecialCharacteristic);
+      const checksheet = sheets[0];
+      const specialField = checksheet.measurementFields?.find((f) => f.isSpecialCharacteristic);
       if (!specialField) {
         toast({
           title: "Seeding Failed",
           description: "No special characteristic found. Mark a field as 'Special Characteristic' first.",
           variant: "destructive",
         });
-        setIsSeeding(false);
         return;
       }
 
@@ -247,32 +217,24 @@ export function SpcTab() {
       const mean = (lsl + usl) / 2;
       const stdDev = (usl - lsl) / 6;
 
-      const promises = [];
-      for (let i = 0; i < 30; i++) {
+      const seedMeasurements = Array.from({ length: 30 }).map(() => {
         const u1 = Math.random();
         const u2 = Math.random();
         const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-        const randomValue = z0 * stdDev + mean;
-
-        const docPayload = {
-          inspector: "seed@system.io",
+        const randomValue = parseFloat((z0 * stdDev + mean).toFixed(3));
+        return api.post("/api/measurements", {
           checksheetId: checksheet.id,
           checksheetName: checksheet.itemName,
           department: checksheet.department,
-          machine: checksheet.machine || "N/A",
-          measurements: { [specialField.fieldName]: parseFloat(randomValue.toFixed(3)) },
+          machine: "Seed",
+          measurements: { [specialField.fieldName]: randomValue },
           issues: [],
-          timestamp: serverTimestamp(),
-        };
-        promises.push(addDoc(collection(firestore, "measurements"), docPayload));
-      }
-
-      await Promise.all(promises);
-      toast({
-        title: "Seeding Successful",
-        description: "Successfully added 30 random data points.",
+        });
       });
-    } catch (error) {
+
+      await Promise.all(seedMeasurements);
+      toast({ title: "Seeding Successful", description: "Successfully added 30 random data points." });
+    } catch {
       toast({ title: "Seeding Error", description: "An error occurred while adding data.", variant: "destructive" });
     } finally {
       setIsSeeding(false);
@@ -282,24 +244,17 @@ export function SpcTab() {
   const handleClearSeededData = async () => {
     setIsClearing(true);
     try {
-      const q = query(collection(firestore, "measurements"), where("inspector", "==", "seed@system.io"));
-      const querySnapshot = await getDocs(q);
+      const measurements = await api.get<Measurement[]>("/api/measurements?limit=10000");
+      const seeded = measurements.filter((m) => m.inspector === "seed@system.io" || m.machine === "Seed");
 
-      if (querySnapshot.empty) {
+      if (seeded.length === 0) {
         toast({ title: "No Seeded Data Found", description: "There is no seeded data to clear." });
-        setIsClearing(false);
         return;
       }
 
-      const batch = writeBatch(firestore);
-      querySnapshot.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
-
-      toast({
-        title: "Seeded Data Cleared",
-        description: `Successfully removed ${querySnapshot.size} measurement records.`,
-      });
-    } catch (error) {
+      await Promise.all(seeded.map((m) => api.delete(`/api/measurements/${m.id}`)));
+      toast({ title: "Seeded Data Cleared", description: `Successfully removed ${seeded.length} measurement records.` });
+    } catch {
       toast({ title: "Error Clearing Data", description: "An unexpected error occurred.", variant: "destructive" });
     } finally {
       setIsClearing(false);
@@ -311,7 +266,7 @@ export function SpcTab() {
       <Card>
         <CardHeader>
           <CardTitle>SPC Analysis</CardTitle>
-          <CardDescription>Select parameters to analyze measurement data from Firestore.</CardDescription>
+          <CardDescription>Select parameters to analyze measurement data.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -393,9 +348,7 @@ export function SpcTab() {
             <div className="space-y-2">
               <Label>4. Number of data points</Label>
               <Select onValueChange={setNumberOfPoints} value={numberOfPoints} disabled={!selectedSpcOption}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="30">30</SelectItem>
                   <SelectItem value="60">60</SelectItem>
@@ -416,9 +369,7 @@ export function SpcTab() {
                     <CalendarIcon className="mr-2 h-4 w-4" />
                     {date?.from ? (
                       date.to ? (
-                        <>
-                          {format(date.from, "LLL dd, y")} - {format(date.to, "LLL dd, y")}
-                        </>
+                        <>{format(date.from, "LLL dd, y")} - {format(date.to, "LLL dd, y")}</>
                       ) : (
                         format(date.from, "LLL dd, y")
                       )
@@ -462,7 +413,7 @@ export function SpcTab() {
           <Info className="h-4 w-4" />
           <AlertTitle>Not Enough Data</AlertTitle>
           <AlertDescription>
-            Found {availableData} data points for the selected criteria, but {numberOfPoints} are required. Please
+            Found {availableData} data points, but {numberOfPoints} are required. Please
             select a larger date range or seed more data.
           </AlertDescription>
         </Alert>

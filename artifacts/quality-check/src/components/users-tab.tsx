@@ -1,18 +1,6 @@
-"use client";
-
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
+import React from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -20,113 +8,109 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { auth, firestore } from "@/lib/firebase";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { api } from "@/lib/api";
+import { Loader2 } from "lucide-react";
 
-const formSchema = z.object({
-  email: z.string().email({ message: "Invalid email address." }),
-  password: z.string().min(8, { message: "Password must be at least 8 characters." }),
-  role: z.enum(["inspector", "manager"]),
-});
+interface AppUser {
+  id: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  role: string;
+  createdAt: string;
+}
 
 export function UsersTab() {
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof formSchema>>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      email: "",
-      password: "",
-      role: "inspector",
-    },
-  });
+  const [users, setUsers] = React.useState<AppUser[]>([]);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [updatingId, setUpdatingId] = React.useState<string | null>(null);
 
-  async function onSubmit(values: z.infer<typeof formSchema>) {
+  const fetchUsers = React.useCallback(async () => {
+    setIsLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
-      const user = userCredential.user;
-
-      await setDoc(doc(firestore, "users", user.uid), {
-        email: values.email,
-        role: values.role,
-      });
-
-      toast({
-        title: "User Added",
-        description: `User ${values.email} has been added with the role ${values.role}.`,
-      });
-      form.reset();
-    } catch (error: any) {
-      toast({
-        title: "Error Adding User",
-        description: error.message,
-        variant: "destructive",
-      });
+      const data = await api.get<AppUser[]>("/api/users");
+      setUsers(data);
+    } catch {
+      toast({ title: "Error", description: "Could not fetch users.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
     }
-  }
+  }, [toast]);
+
+  React.useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  const handleRoleChange = async (userId: string, role: string) => {
+    setUpdatingId(userId);
+    try {
+      await api.patch(`/api/users/${userId}/role`, { role });
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role } : u)));
+      toast({ title: "Role Updated", description: `User role changed to ${role}.` });
+    } catch {
+      toast({ title: "Error", description: "Could not update role.", variant: "destructive" });
+    } finally {
+      setUpdatingId(null);
+    }
+  };
 
   return (
     <div className="flex justify-center">
-      <Card className="w-full max-w-lg">
+      <Card className="w-full max-w-2xl">
         <CardHeader>
-          <CardTitle>Add User</CardTitle>
-          <CardDescription>Add a new user to the system and assign a role.</CardDescription>
+          <CardTitle>Users</CardTitle>
+          <CardDescription>
+            Manage user roles. Users must sign in with Replit to appear here.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-              <FormField
-                control={form.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input placeholder="user@example.com" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
-                    <FormControl>
-                      <Input type="password" placeholder="••••••••" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="role"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Role</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a role" />
-                        </SelectTrigger>
-                      </FormControl>
+          {isLoading ? (
+            <div className="flex justify-center items-center p-8">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : users.length === 0 ? (
+            <p className="text-muted-foreground text-center p-8">No users found.</p>
+          ) : (
+            <div className="space-y-3">
+              {users.map((user) => (
+                <div
+                  key={user.id}
+                  className="flex items-center justify-between p-3 border rounded-lg"
+                >
+                  <div>
+                    <p className="font-medium">
+                      {user.firstName || user.lastName
+                        ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim()
+                        : user.email ?? "Unknown"}
+                    </p>
+                    {user.email && (
+                      <p className="text-sm text-muted-foreground">{user.email}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {updatingId === user.id && (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    )}
+                    <Select
+                      value={user.role}
+                      onValueChange={(role) => handleRoleChange(user.id, role)}
+                      disabled={updatingId === user.id}
+                    >
+                      <SelectTrigger className="w-36">
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="inspector">Inspector</SelectItem>
                         <SelectItem value="manager">Manager</SelectItem>
                       </SelectContent>
                     </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <Button type="submit" className="w-full">Add User</Button>
-            </form>
-          </Form>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
