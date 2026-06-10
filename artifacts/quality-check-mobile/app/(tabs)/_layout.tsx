@@ -11,8 +11,9 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 
 // Manager tab set: Inspect, SPC, History, Export, Profile (5 tabs, Android-safe)
-// Inspector tab set: Inspect, History, Checksheets, Profile (4 tabs)
+// Inspector tab set: Inspect, History, Audits, Sheets, Profile (5 tabs, Android-safe)
 // Users screen is linked from the Profile tab for managers.
+// Audits screen is hidden from manager tab bar (managers use web for audit management).
 
 function NativeTabLayout({ isManager }: { isManager: boolean }) {
   return (
@@ -31,6 +32,12 @@ function NativeTabLayout({ isManager }: { isManager: boolean }) {
         <Icon sf={{ default: "clock", selected: "clock.fill" }} />
         <Label>History</Label>
       </NativeTabs.Trigger>
+      {!isManager && (
+        <NativeTabs.Trigger name="audits">
+          <Icon sf={{ default: "checkmark.circle", selected: "checkmark.circle.fill" }} />
+          <Label>Audits</Label>
+        </NativeTabs.Trigger>
+      )}
       {!isManager && (
         <NativeTabs.Trigger name="checksheets">
           <Icon sf={{ default: "doc.text", selected: "doc.text.fill" }} />
@@ -123,6 +130,21 @@ function ClassicTabLayout({ isManager }: { isManager: boolean }) {
               <SymbolView name="clock" tintColor={color} size={24} />
             ) : (
               <Feather name="clock" size={22} color={color} />
+            ),
+        }}
+      />
+
+      {/* Audits — inspectors see in tab bar; managers can navigate but it's hidden from their bar */}
+      <Tabs.Screen
+        name="audits"
+        options={{
+          title: "Audits",
+          href: isManager ? null : undefined,
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="checkmark.circle" tintColor={color} size={24} />
+            ) : (
+              <Feather name="check-square" size={22} color={color} />
             ),
         }}
       />
