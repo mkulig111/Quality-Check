@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/quality-check-mobile/"
+title = "Quality Check Mobile"
+version = "1.0.0"
+id = "artifacts/quality-check-mobile"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/quality-check-mobile/" ]
+localPort = 25047
+
+[services.development]
+run = "pnpm --filter @workspace/quality-check-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/quality-check-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/quality-check-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "25047"
+BASE_PATH = "/quality-check-mobile/"

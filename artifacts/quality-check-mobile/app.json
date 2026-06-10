@@ -11,15 +11,12 @@
     "splash": {
       "image": "./assets/images/icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#f4f4f5"
+      "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": false,
-      "bundleIdentifier": "com.replit.qualitycheckmobile"
+      "supportsTablet": false
     },
-    "android": {
-      "package": "com.replit.qualitycheckmobile"
-    },
+    "android": {},
     "web": {
       "favicon": "./assets/images/icon.png"
     },
@@ -31,8 +28,7 @@
         }
       ],
       "expo-font",
-      "expo-web-browser",
-      "expo-secure-store"
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

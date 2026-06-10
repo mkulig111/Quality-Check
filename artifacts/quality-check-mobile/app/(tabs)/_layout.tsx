@@ -10,6 +10,10 @@ import { ActivityIndicator, Platform, StyleSheet, View, useColorScheme } from "r
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 
+// Manager tab set: Inspect, SPC, History, Export, Profile (5 tabs, Android-safe)
+// Inspector tab set: Inspect, History, Checksheets, Profile (4 tabs)
+// Users screen is linked from the Profile tab for managers.
+
 function NativeTabLayout({ isManager }: { isManager: boolean }) {
   return (
     <NativeTabs>
@@ -17,14 +21,22 @@ function NativeTabLayout({ isManager }: { isManager: boolean }) {
         <Icon sf={{ default: "checklist", selected: "checklist" }} />
         <Label>Inspect</Label>
       </NativeTabs.Trigger>
+      {isManager && (
+        <NativeTabs.Trigger name="spc">
+          <Icon sf={{ default: "chart.xyaxis.line", selected: "chart.xyaxis.line" }} />
+          <Label>SPC</Label>
+        </NativeTabs.Trigger>
+      )}
       <NativeTabs.Trigger name="history">
         <Icon sf={{ default: "clock", selected: "clock.fill" }} />
         <Label>History</Label>
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="checksheets">
-        <Icon sf={{ default: "doc.text", selected: "doc.text.fill" }} />
-        <Label>Sheets</Label>
-      </NativeTabs.Trigger>
+      {!isManager && (
+        <NativeTabs.Trigger name="checksheets">
+          <Icon sf={{ default: "doc.text", selected: "doc.text.fill" }} />
+          <Label>Sheets</Label>
+        </NativeTabs.Trigger>
+      )}
       {isManager && (
         <NativeTabs.Trigger name="export">
           <Icon sf={{ default: "arrow.down.circle", selected: "arrow.down.circle.fill" }} />
@@ -68,15 +80,11 @@ function ClassicTabLayout({ isManager }: { isManager: boolean }) {
               style={StyleSheet.absoluteFill}
             />
           ) : isWeb ? (
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                { backgroundColor: colors.background },
-              ]}
-            />
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background }]} />
           ) : null,
       }}
     >
+      {/* Inspection — visible to all */}
       <Tabs.Screen
         name="inspection"
         options={{
@@ -89,6 +97,23 @@ function ClassicTabLayout({ isManager }: { isManager: boolean }) {
             ),
         }}
       />
+
+      {/* SPC — managers only */}
+      <Tabs.Screen
+        name="spc"
+        options={{
+          title: "SPC",
+          href: isManager ? undefined : null,
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="chart.xyaxis.line" tintColor={color} size={24} />
+            ) : (
+              <Feather name="bar-chart-2" size={22} color={color} />
+            ),
+        }}
+      />
+
+      {/* History — visible to all */}
       <Tabs.Screen
         name="history"
         options={{
@@ -101,10 +126,13 @@ function ClassicTabLayout({ isManager }: { isManager: boolean }) {
             ),
         }}
       />
+
+      {/* Check Sheets — inspectors only in tab bar; managers navigate from Profile */}
       <Tabs.Screen
         name="checksheets"
         options={{
           title: "Sheets",
+          href: isManager ? null : undefined,
           tabBarIcon: ({ color }) =>
             isIOS ? (
               <SymbolView name="doc.text" tintColor={color} size={24} />
@@ -113,11 +141,12 @@ function ClassicTabLayout({ isManager }: { isManager: boolean }) {
             ),
         }}
       />
+
+      {/* Export — managers only */}
       <Tabs.Screen
         name="export"
         options={{
           title: "Export",
-          // Hide tab for inspectors — still routable but removed from bar
           href: isManager ? undefined : null,
           tabBarIcon: ({ color }) =>
             isIOS ? (
@@ -127,6 +156,23 @@ function ClassicTabLayout({ isManager }: { isManager: boolean }) {
             ),
         }}
       />
+
+      {/* Users — manager only; hidden from tab bar but routable via Profile */}
+      <Tabs.Screen
+        name="users"
+        options={{
+          title: "Users",
+          href: null, // accessible via navigation from settings, not in tab bar
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="person.2" tintColor={color} size={24} />
+            ) : (
+              <Feather name="users" size={22} color={color} />
+            ),
+        }}
+      />
+
+      {/* Profile/Settings — visible to all */}
       <Tabs.Screen
         name="settings"
         options={{

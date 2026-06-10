@@ -1,3 +1,6 @@
+// Design tokens synced from artifacts/quality-check/src/index.css
+// Primary: crimson/deep-pink brand (#c11a58)
+
 const colors = {
   light: {
     text: "#3d2d32",
@@ -18,46 +21,46 @@ const colors = {
     muted: "#f5ecf0",
     mutedForeground: "#88797d",
 
-    accent: "#c11a58",
-    accentForeground: "#ffffff",
+    accent: "#f5ecf0",
+    accentForeground: "#3d2d32",
 
     destructive: "#ef4444",
     destructiveForeground: "#ffffff",
 
     border: "#ecdde3",
     input: "#ecdde3",
-    ring: "#c11a58",
   },
-  dark: {
-    text: "#f0e8ec",
-    tint: "#e0547a",
 
-    background: "#1a1014",
-    foreground: "#f0e8ec",
+  dark: {
+    text: "#f5ecf0",
+    tint: "#e64d87",
+
+    background: "#1a1015",
+    foreground: "#f5ecf0",
 
     card: "#261820",
-    cardForeground: "#f0e8ec",
+    cardForeground: "#f5ecf0",
 
-    primary: "#e0547a",
+    primary: "#e64d87",
     primaryForeground: "#ffffff",
 
-    secondary: "#2a1e24",
-    secondaryForeground: "#f0e8ec",
+    secondary: "#3d2d32",
+    secondaryForeground: "#f5ecf0",
 
-    muted: "#2a1e24",
-    mutedForeground: "#a08890",
+    muted: "#3d2d32",
+    mutedForeground: "#a89298",
 
-    accent: "#e0547a",
-    accentForeground: "#ffffff",
+    accent: "#3d2d32",
+    accentForeground: "#f5ecf0",
 
     destructive: "#ef4444",
     destructiveForeground: "#ffffff",
 
-    border: "#3d2d35",
-    input: "#3d2d35",
-    ring: "#e0547a",
+    border: "#3d2d32",
+    input: "#3d2d32",
   },
-  radius: 8,
+
+  radius: 10,
 };
 
 export default colors;
