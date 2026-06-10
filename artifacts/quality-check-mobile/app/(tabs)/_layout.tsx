@@ -10,7 +10,7 @@ import { ActivityIndicator, Platform, StyleSheet, View, useColorScheme } from "r
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 
-function NativeTabLayout() {
+function NativeTabLayout({ isManager }: { isManager: boolean }) {
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="inspection">
@@ -21,6 +21,16 @@ function NativeTabLayout() {
         <Icon sf={{ default: "clock", selected: "clock.fill" }} />
         <Label>History</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="checksheets">
+        <Icon sf={{ default: "doc.text", selected: "doc.text.fill" }} />
+        <Label>Sheets</Label>
+      </NativeTabs.Trigger>
+      {isManager && (
+        <NativeTabs.Trigger name="export">
+          <Icon sf={{ default: "arrow.down.circle", selected: "arrow.down.circle.fill" }} />
+          <Label>Export</Label>
+        </NativeTabs.Trigger>
+      )}
       <NativeTabs.Trigger name="settings">
         <Icon sf={{ default: "person.circle", selected: "person.circle.fill" }} />
         <Label>Profile</Label>
@@ -29,7 +39,7 @@ function NativeTabLayout() {
   );
 }
 
-function ClassicTabLayout() {
+function ClassicTabLayout({ isManager }: { isManager: boolean }) {
   const colors = useColors();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
@@ -92,6 +102,32 @@ function ClassicTabLayout() {
         }}
       />
       <Tabs.Screen
+        name="checksheets"
+        options={{
+          title: "Sheets",
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="doc.text" tintColor={color} size={24} />
+            ) : (
+              <Feather name="file-text" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="export"
+        options={{
+          title: "Export",
+          // Hide tab for inspectors — still routable but removed from bar
+          href: isManager ? undefined : null,
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="arrow.down.circle" tintColor={color} size={24} />
+            ) : (
+              <Feather name="download" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: "Profile",
@@ -123,8 +159,10 @@ export default function TabLayout() {
     return <Redirect href="/login" />;
   }
 
+  const isManager = user.role === "manager";
+
   if (isLiquidGlassAvailable()) {
-    return <NativeTabLayout />;
+    return <NativeTabLayout isManager={isManager} />;
   }
-  return <ClassicTabLayout />;
+  return <ClassicTabLayout isManager={isManager} />;
 }

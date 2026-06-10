@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import * as AuthSession from "expo-auth-session";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
@@ -67,7 +67,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const redirectUri = AuthSession.makeRedirectUri({ scheme: "quality-check-mobile" });
 
-  const [, response, promptAsync] = AuthSession.useAuthRequest(
+  // Capture request so we can read its codeVerifier in the response handler
+  const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
       clientId: process.env.EXPO_PUBLIC_REPL_ID ?? "replit",
       redirectUri,
@@ -76,6 +77,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     },
     discovery
   );
+
+  // Keep a stable ref to the latest request so the response effect can read it
+  const requestRef = useRef(request);
+  useEffect(() => { requestRef.current = request; }, [request]);
 
   const fetchUser = useCallback(async (sessionToken: string) => {
     try {
@@ -89,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Restore session from SecureStore on mount
   useEffect(() => {
     (async () => {
       const stored = await secureGet(TOKEN_KEY);
@@ -104,18 +110,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [fetchUser]);
 
+  // Handle OIDC callback — use request.codeVerifier (PKCE verifier is on the request, not response)
   useEffect(() => {
-    if (!response) return;
-    if (response.type !== "success") return;
+    if (!response || response.type !== "success") return;
 
     const { code, state } = response.params;
-    const codeVerifier = (response as any).codeVerifier as string | undefined;
+    const codeVerifier = requestRef.current?.codeVerifier ?? "";
 
     (async () => {
       try {
         const body = {
           code,
-          code_verifier: codeVerifier ?? "",
+          code_verifier: codeVerifier,
           redirect_uri: redirectUri,
           state: state ?? "",
           nonce: null,
@@ -134,7 +140,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error("Auth error:", err);
       }
     })();
-  }, [response, redirectUri, fetchUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [response]);
 
   const signIn = useCallback(async () => {
     await promptAsync();
