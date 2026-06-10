@@ -1,36 +1,48 @@
-# [Project name]
+# Quality Check
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+AI-powered quality control app for manufacturing inspection, SPC analysis, and data export.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/quality-check run dev` — run the Quality Check app (port 20776)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Frontend: React 18 + Vite, Tailwind CSS v4, shadcn/ui components
+- Routing: wouter (replaces Next.js router)
+- Auth & DB: Firebase Auth + Firestore + Firebase Storage
+- Charts: Recharts (SPC analysis charts)
+- Forms: react-hook-form + zod
+- Date: date-fns + react-day-picker v9
+- CSV: papaparse
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/quality-check/src/` — React Vite app source
+- `artifacts/quality-check/src/pages/` — login.tsx, dashboard.tsx
+- `artifacts/quality-check/src/components/` — UI components (header, tabs)
+- `artifacts/quality-check/src/lib/firebase.ts` — Firebase config & exports
+- `artifacts/quality-check/src/index.css` — Theme (HSL CSS variables, pink/crimson primary)
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Firebase-only backend (no Postgres/Drizzle ORM used in this app)
+- Server-side Genkit AI flows (spcFromStorageFlow, generateReportsFlow, dailyExportFlow) were removed from the Vite client — SPC analysis now runs directly against Firestore measurements instead of Firebase Storage CSVs
+- Role-based dashboard: managers see all 5 tabs (Users, CheckSheet, SPC, Inspection, Export); inspectors see only Inspection tab
+- Recent measurements stored in a separate `recent_measurements` Firestore collection for fast real-time queries (capped at 100 docs, pruned automatically)
+- CSV export is fully client-side using papaparse (no cloud function needed)
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- **Login** — Firebase Auth with remember-me persistence
+- **Users tab** — Managers can add inspector/manager accounts
+- **Check Sheet tab** — Define items with measurement fields (Numeric/Boolean/Text), LSL/USL spec limits, and SPC special characteristics
+- **SPC tab** — Statistical Process Control analysis (Cp/Cpk/Pp/Ppk/PPM) with X-bar, Range, and distribution charts; seed/clear demo data
+- **Inspection tab** — Inspectors submit measurements per check sheet; real-time history with edit/delete
+- **Export tab** — Download measurements as CSV by department + date range
 
 ## User preferences
 
@@ -38,7 +50,10 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- react-day-picker v9 is installed (not v8); `DateRange` import is from `react-day-picker` directly
+- Firebase SDK v12 (modular) is used throughout — no compat imports
+- The SPC tab reads directly from Firestore `measurements` collection (not from Firebase Storage CSVs like the original Genkit flow did)
+- Firestore composite indexes may be needed for queries with multiple `where` + `orderBy` clauses
 
 ## Pointers
 

@@ -1,0 +1,1 @@
+- [Quality Check Firebase migration](quality-check-migration.md) — Genkit server-side flows replaced with direct Firestore queries in the Vite client
