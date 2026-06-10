@@ -8,6 +8,28 @@ AI-powered quality control app for manufacturing inspection, SPC analysis, and d
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 
+## Database migrations (`lib/db`)
+
+Schema lives in `lib/db/src/schema/`. Use this workflow after any schema change:
+
+```
+# 1. Generate a new migration SQL file from the schema diff
+pnpm --filter @workspace/db run generate
+
+# 2. Apply all unapplied migrations (non-interactive, works without a TTY)
+pnpm --filter @workspace/db run migrate
+```
+
+Migration files are stored in `lib/db/migrations/` and tracked in the database via the `drizzle.__drizzle_migrations` table.
+
+**One-time setup for an existing database** (already has tables but no migration tracking):
+```
+pnpm --filter @workspace/db run stamp
+```
+This marks all existing migrations as applied without re-running them, then future changes use `generate` + `migrate`.
+
+> **Do not use `db:push`** — it requires a TTY for certain schema changes (e.g. adding a unique constraint to an existing table) and will hang non-interactively.
+
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
