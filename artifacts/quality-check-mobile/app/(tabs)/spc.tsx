@@ -4,7 +4,6 @@ import {
   FlatList,
   Platform,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -15,6 +14,29 @@ import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
+
+interface MeasurementField {
+  fieldName: string;
+  fieldType: string;
+  isSpecialCharacteristic?: boolean;
+  lsl?: number;
+  usl?: number;
+}
+
+interface Checksheet {
+  id: number;
+  itemName: string;
+  department: string;
+  measurementFields: MeasurementField[];
+}
+
+interface Measurement {
+  id: number;
+  checksheetName: string;
+  department: string;
+  measurements: Record<string, unknown>;
+  timestamp: string;
+}
 
 interface SpcResult {
   checksheetName: string;
@@ -32,34 +54,76 @@ interface SpcResult {
   usl?: number;
 }
 
-interface SpcSummaryResponse {
-  results: SpcResult[];
-  generatedAt?: string;
+const D2_5 = 2.326;
+
+function getMean(data: number[]) {
+  if (data.length === 0) return 0;
+  return data.reduce((a, b) => a + b, 0) / data.length;
 }
 
-function cpkColor(cpk: number | undefined, colors: ReturnType<typeof import("@/hooks/useColors").useColors>) {
-  if (cpk === undefined) return colors.mutedForeground;
-  if (cpk >= 1.67) return "#16a34a"; // green
-  if (cpk >= 1.33) return "#2563eb"; // blue
-  if (cpk >= 1.0) return "#d97706";  // amber
-  return "#dc2626";                    // red
+function getStdDev(data: number[]) {
+  if (data.length < 2) return 0;
+  const m = getMean(data);
+  return Math.sqrt(data.reduce((s, x) => s + (x - m) ** 2, 0) / (data.length - 1));
 }
 
-function StatBox({
-  label,
-  value,
-  color,
-  colors,
-}: {
-  label: string;
-  value: string;
-  color?: string;
-  colors: ReturnType<typeof import("@/hooks/useColors").useColors>;
-}) {
+function computeSpc(values: number[], lsl?: number, usl?: number): SpcResult["cp"] extends undefined ? Partial<SpcResult> : Partial<SpcResult> {
+  const n = values.length;
+  if (n < 5) return {};
+  const mean = getMean(values);
+  const stddev = getStdDev(values);
+  if (stddev === 0) return { n, mean, stddev };
+
+  const subSize = 5;
+  const subgroups: number[][] = [];
+  for (let i = 0; i + subSize <= n; i += subSize) subgroups.push(values.slice(i, i + subSize));
+  const subRanges = subgroups.map(sg => Math.max(...sg) - Math.min(...sg));
+  const avgRange = getMean(subRanges);
+  const withinStdDev = avgRange > 0 ? avgRange / D2_5 : stddev;
+
+  let cp: number | undefined;
+  let cpk: number | undefined;
+  let pp: number | undefined;
+  let ppk: number | undefined;
+  let ppm: number | undefined;
+
+  if (lsl !== undefined && usl !== undefined) {
+    cp = withinStdDev > 0 ? (usl - lsl) / (6 * withinStdDev) : undefined;
+    pp = stddev > 0 ? (usl - lsl) / (6 * stddev) : undefined;
+  }
+  const cpu = usl !== undefined && withinStdDev > 0 ? (usl - mean) / (3 * withinStdDev) : Infinity;
+  const cpl = lsl !== undefined && withinStdDev > 0 ? (mean - lsl) / (3 * withinStdDev) : Infinity;
+  if (isFinite(cpu) || isFinite(cpl)) {
+    cpk = Math.min(isFinite(cpu) ? cpu : Infinity, isFinite(cpl) ? cpl : Infinity);
+    if (!isFinite(cpk)) cpk = undefined;
+  }
+  const ppu = usl !== undefined && stddev > 0 ? (usl - mean) / (3 * stddev) : Infinity;
+  const ppl = lsl !== undefined && stddev > 0 ? (mean - lsl) / (3 * stddev) : Infinity;
+  if (isFinite(ppu) || isFinite(ppl)) {
+    ppk = Math.min(isFinite(ppu) ? ppu : Infinity, isFinite(ppl) ? ppl : Infinity);
+    if (!isFinite(ppk)) ppk = undefined;
+  }
+  if (ppk !== undefined && ppk > 0) {
+    ppm = (1 - (0.5 * (1 + Math.sign(ppk)) - 0.5 * Math.sign(ppk) * (1 - Math.exp(-((ppk * Math.sqrt(2)) ** 2))))) * 2 * 1_000_000;
+    ppm = Math.round(ppm);
+  }
+
+  return { n, mean, stddev, cp, cpk, pp, ppk, ppm };
+}
+
+function cpkColor(cpk: number | undefined, primary: string) {
+  if (cpk === undefined) return "#888";
+  if (cpk >= 1.67) return "#16a34a";
+  if (cpk >= 1.33) return "#2563eb";
+  if (cpk >= 1.0) return "#d97706";
+  return "#dc2626";
+}
+
+function StatBox({ label, value, color, bgColor }: { label: string; value: string; color?: string; bgColor: string }) {
   return (
-    <View style={[statStyles.box, { backgroundColor: colors.muted }]}>
-      <Text style={[statStyles.val, { color: color ?? colors.foreground }]}>{value}</Text>
-      <Text style={[statStyles.lbl, { color: colors.mutedForeground }]}>{label}</Text>
+    <View style={[statStyles.box, { backgroundColor: bgColor }]}>
+      <Text style={[statStyles.val, { color: color ?? "#111" }]}>{value}</Text>
+      <Text style={[statStyles.lbl, { color: "#888" }]}>{label}</Text>
     </View>
   );
 }
@@ -78,18 +142,76 @@ export default function SpcScreen() {
   const [results, setResults] = useState<SpcResult[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
 
   const isManager = user?.role === "manager";
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
     try {
-      const data = await api.get<SpcSummaryResponse>("/api/spc/summary");
-      setResults(data.results ?? []);
-      setGeneratedAt(data.generatedAt ?? null);
+      const checksheets = await api.get<Checksheet[]>("/api/checksheets");
+
+      const spcEntries: Array<{
+        checksheetName: string;
+        department: string;
+        fieldName: string;
+        lsl?: number;
+        usl?: number;
+      }> = [];
+
+      for (const cs of checksheets) {
+        if (!cs.measurementFields) continue;
+        for (const field of cs.measurementFields) {
+          if (field.isSpecialCharacteristic && field.fieldType === "Numeric") {
+            spcEntries.push({
+              checksheetName: cs.itemName,
+              department: cs.department,
+              fieldName: field.fieldName,
+              lsl: field.lsl,
+              usl: field.usl,
+            });
+          }
+        }
+      }
+
+      const computed: SpcResult[] = [];
+      for (const entry of spcEntries) {
+        try {
+          const measurements = await api.get<Measurement[]>(
+            `/api/measurements?checksheetName=${encodeURIComponent(entry.checksheetName)}&department=${encodeURIComponent(entry.department)}&limit=200`
+          );
+          const values: number[] = [];
+          for (const m of measurements) {
+            const raw = m.measurements?.[entry.fieldName];
+            if (raw !== undefined && raw !== null && !isNaN(Number(raw))) {
+              values.push(Number(raw));
+            }
+          }
+          if (values.length < 5) continue;
+          const stats = computeSpc(values, entry.lsl, entry.usl);
+          computed.push({
+            checksheetName: entry.checksheetName,
+            fieldName: entry.fieldName,
+            department: entry.department,
+            lsl: entry.lsl,
+            usl: entry.usl,
+            n: stats.n ?? values.length,
+            mean: stats.mean ?? getMean(values),
+            stddev: stats.stddev ?? getStdDev(values),
+            cp: stats.cp,
+            cpk: stats.cpk,
+            pp: stats.pp,
+            ppk: stats.ppk,
+            ppm: stats.ppm,
+          });
+        } catch {
+          // skip this entry
+        }
+      }
+
+      setResults(computed);
+      setLoadedAt(new Date());
     } catch {
-      // Endpoint may not exist — show empty state gracefully
       setResults([]);
     } finally {
       setIsLoading(false);
@@ -120,9 +242,9 @@ export default function SpcScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { paddingTop: topPad, backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>SPC Analysis</Text>
-        {generatedAt && (
+        {loadedAt && (
           <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
-            Updated {new Date(generatedAt).toLocaleDateString()}
+            Updated {loadedAt.toLocaleTimeString()}
           </Text>
         )}
       </View>
@@ -150,7 +272,7 @@ export default function SpcScreen() {
               <Feather name="bar-chart-2" size={40} color={colors.mutedForeground} />
               <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No SPC data</Text>
               <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                Submit measurements with SPC characteristics to see capability indices here.
+                Submit at least 5 measurements for a field marked as Special Characteristic to see capability indices.
               </Text>
             </View>
           }
@@ -166,34 +288,30 @@ export default function SpcScreen() {
                   </Text>
                 </View>
                 {r.cpk !== undefined && (
-                  <View style={[styles.cpkBadge, { backgroundColor: cpkColor(r.cpk, colors) }]}>
-                    <Text style={styles.cpkBadgeText}>
-                      Cpk {r.cpk.toFixed(2)}
-                    </Text>
+                  <View style={[styles.cpkBadge, { backgroundColor: cpkColor(r.cpk, colors.primary) }]}>
+                    <Text style={styles.cpkBadgeText}>Cpk {r.cpk.toFixed(2)}</Text>
                   </View>
                 )}
               </View>
 
               <View style={styles.statsRow}>
                 {r.cp !== undefined && (
-                  <StatBox label="Cp" value={r.cp.toFixed(2)} colors={colors} />
+                  <StatBox label="Cp" value={r.cp.toFixed(2)} bgColor={colors.muted} color={colors.foreground} />
                 )}
                 {r.cpk !== undefined && (
-                  <StatBox label="Cpk" value={r.cpk.toFixed(2)} color={cpkColor(r.cpk, colors)} colors={colors} />
+                  <StatBox label="Cpk" value={r.cpk.toFixed(2)} color={cpkColor(r.cpk, colors.primary)} bgColor={colors.muted} />
                 )}
                 {r.pp !== undefined && (
-                  <StatBox label="Pp" value={r.pp.toFixed(2)} colors={colors} />
+                  <StatBox label="Pp" value={r.pp.toFixed(2)} bgColor={colors.muted} color={colors.foreground} />
                 )}
                 {r.ppk !== undefined && (
-                  <StatBox label="Ppk" value={r.ppk.toFixed(2)} colors={colors} />
+                  <StatBox label="Ppk" value={r.ppk.toFixed(2)} bgColor={colors.muted} color={colors.foreground} />
                 )}
               </View>
 
               {r.ppm !== undefined && (
                 <View style={styles.ppmRow}>
-                  <Text style={[styles.ppmLabel, { color: colors.mutedForeground }]}>
-                    Estimated PPM out of spec:{" "}
-                  </Text>
+                  <Text style={[styles.ppmLabel, { color: colors.mutedForeground }]}>Estimated PPM out of spec: </Text>
                   <Text style={[styles.ppmValue, { color: r.ppm > 6210 ? "#dc2626" : colors.foreground }]}>
                     {r.ppm.toLocaleString()}
                   </Text>
@@ -205,7 +323,7 @@ export default function SpcScreen() {
                   {r.lsl !== undefined ? `LSL ${r.lsl}` : ""}
                   {r.lsl !== undefined && r.usl !== undefined ? "  " : ""}
                   {r.usl !== undefined ? `USL ${r.usl}` : ""}
-                  {r.mean !== undefined ? `  mean ${r.mean.toFixed(3)}` : ""}
+                  {`  mean ${r.mean.toFixed(3)}`}
                 </Text>
               )}
             </View>

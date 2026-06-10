@@ -5,6 +5,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -55,6 +56,36 @@ function getDateRange(range: DateRange): { startDate: string; endDate: string } 
   }
 }
 
+function mergeCsvBlocks(blocks: string[]): string {
+  const nonEmpty = blocks.filter((b) => b.trim().length > 0);
+  if (nonEmpty.length === 0) return "";
+  const [first, ...rest] = nonEmpty;
+  const firstLines = first.split("\n");
+  const header = firstLines[0];
+  const dataLines = firstLines.slice(1);
+  for (const block of rest) {
+    const lines = block.split("\n");
+    dataLines.push(...lines.slice(1).filter((l) => l.trim().length > 0));
+  }
+  return [header, ...dataLines].join("\n");
+}
+
+async function shareCsv(csv: string, filename: string) {
+  if (Platform.OS === "web") {
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } else {
+    await Share.share({ message: csv, title: filename });
+  }
+}
+
 export default function ExportScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -84,20 +115,50 @@ export default function ExportScreen() {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       const { startDate, endDate } = getDateRange(dateRange);
-      const result = await api.post<{
-        count: number;
-        departments: string[];
-        message: string;
-      }>("/api/export/generate", {
-        departments: Array.from(selectedDepts),
-        startDate,
-        endDate,
-      });
+      const depts = Array.from(selectedDepts);
+
+      const csvBlocks: string[] = [];
+      let totalRows = 0;
+      const errors: string[] = [];
+
+      for (const department of depts) {
+        try {
+          const csv = await api.postText("/api/export/generate", {
+            department,
+            startDate,
+            endDate,
+          });
+          const lines = csv.trim().split("\n");
+          const rowCount = Math.max(0, lines.length - 1);
+          if (rowCount > 0) {
+            csvBlocks.push(csv);
+            totalRows += rowCount;
+          }
+        } catch (err: any) {
+          const msg: string = err.message ?? "";
+          if (!msg.toLowerCase().includes("no data")) {
+            errors.push(`${department}: ${msg}`);
+          }
+        }
+      }
+
+      if (errors.length > 0) {
+        Alert.alert("Export warning", errors.join("\n"));
+        return;
+      }
+
+      if (totalRows === 0) {
+        Alert.alert("No data", `No records found for ${DATE_RANGE_LABELS[dateRange]}.`);
+        return;
+      }
+
+      const combined = mergeCsvBlocks(csvBlocks);
+      const today = new Date().toISOString().split("T")[0];
+      const filename = `quality-check-${today}.csv`;
+
+      await shareCsv(combined, filename);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        "Export Ready",
-        `${result.count ?? 0} records exported for ${DATE_RANGE_LABELS[dateRange]}.`,
-      );
+      Alert.alert("Export Ready", `${totalRows} records exported for ${DATE_RANGE_LABELS[dateRange]}.`);
     } catch (err: any) {
       Alert.alert("Export failed", err.message ?? "Unknown error");
     } finally {
@@ -109,12 +170,14 @@ export default function ExportScreen() {
     setIsRunningDaily(true);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      const result = await api.post<{ results: { department: string; status: string }[] }>(
-        "/api/export/daily",
-        {}
-      );
-      const summary = (result.results ?? [])
-        .map(r => `${r.department}: ${r.status}`)
+      const result = await api.post<{
+        success: boolean;
+        date: string;
+        message: string;
+        exports: { department: string; status: string; count?: number }[];
+      }>("/api/export/daily", {});
+      const summary = (result.exports ?? [])
+        .map(r => `${r.department}: ${r.status}${r.count !== undefined ? ` (${r.count})` : ""}`)
         .join("\n");
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert("Daily Export Complete", summary || "Done");
@@ -148,7 +211,7 @@ export default function ExportScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { paddingTop: topPad, backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Export</Text>
-        <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Download measurement data</Text>
+        <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>Download measurement data as CSV</Text>
       </View>
 
       <ScrollView
