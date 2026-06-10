@@ -349,11 +349,12 @@ export function InspectionTab() {
             continue;
           }
 
+          const normalize = (s: string) => s.replace(/\s+/g, "").toLowerCase();
           const checksheet = allChecksheets.find(
             (cs) =>
-              cs.itemName === checksheetName &&
-              cs.department === department &&
-              cs.machine === machine,
+              normalize(cs.itemName) === normalize(checksheetName) &&
+              normalize(cs.department) === normalize(department) &&
+              normalize(cs.machine) === normalize(machine),
           );
 
           if (!checksheet) {
