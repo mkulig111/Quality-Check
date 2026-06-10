@@ -2,7 +2,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { z } from "zod";
 import React from "react";
-import { PlusCircle, Trash2, FilePenLine, Loader2 } from "lucide-react";
+import { PlusCircle, Trash2, FilePenLine, Loader2, Upload, Download } from "lucide-react";
+import Papa from "papaparse";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +38,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 
 const measurementFieldSchema = z.object({
   fieldName: z.string().min(1, "Field name is required."),
@@ -76,11 +78,36 @@ const machineOptionsByDepartment: Record<string, string[]> = {
   Assembly: ["Compbase", "Bottom Plate", "Plate Rear", "Reinforce 1", "Renforce 2", "Duct Connector", "Dispenser Welding"],
 };
 
+const CHECKSHEET_TEMPLATE_ROWS = [
+  ["item_name", "department", "machine", "field_name", "field_type", "unit", "lsl", "usl", "is_special_characteristic"],
+  ["Engine Block", "Stamping", "TR1", "Weight", "Numeric", "kg", "74.5", "75.5", "false"],
+  ["Engine Block", "Stamping", "TR1", "Surface OK", "Boolean", "", "", "", "false"],
+  ["Engine Block", "Stamping", "TR1", "Notes", "Text", "", "", "", "false"],
+  ["Bracket A", "Stamping", "TR2", "Thickness", "Numeric", "mm", "1.8", "2.2", "true"],
+];
+
+function downloadTemplate() {
+  const csv = Papa.unparse(CHECKSHEET_TEMPLATE_ROWS);
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "checksheet_template.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function ChecksheetTab() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isManager = user?.role === "manager";
+
   const [allChecksheets, setAllChecksheets] = React.useState<Checksheet[]>([]);
   const [departmentChecksheets, setDepartmentChecksheets] = React.useState<Checksheet[]>([]);
   const [isFetchingSheets, setIsFetchingSheets] = React.useState(true);
+  const [isImporting, setIsImporting] = React.useState(false);
+
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const [editingSheetId, setEditingSheetId] = React.useState<number | null>(null);
   const [selectedDepartment, setSelectedDepartment] = React.useState<string | null>(null);
@@ -203,16 +230,133 @@ export function ChecksheetTab() {
     }
   };
 
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const rows = results.data;
+        if (!rows.length) {
+          toast({ title: "Import Failed", description: "CSV file is empty.", variant: "destructive" });
+          return;
+        }
+
+        const grouped = new Map<string, { itemName: string; department: string; machine: string; fields: Checksheet["measurementFields"] }>();
+
+        for (const row of rows) {
+          const itemName = (row["item_name"] || "").trim();
+          const department = (row["department"] || "").trim();
+          const machine = (row["machine"] || "").trim();
+          const fieldName = (row["field_name"] || "").trim();
+          const rawType = (row["field_type"] || "Numeric").trim();
+          const fieldType = (["Numeric", "Boolean", "Text"].includes(rawType) ? rawType : "Numeric") as "Numeric" | "Boolean" | "Text";
+          const unit = (row["unit"] || "").trim() || undefined;
+          const lslRaw = parseFloat(row["lsl"] || "");
+          const uslRaw = parseFloat(row["usl"] || "");
+          const isSpecial = (row["is_special_characteristic"] || "").toLowerCase() === "true";
+
+          if (!itemName || !department || !machine || !fieldName) continue;
+
+          const key = `${itemName}|${department}|${machine}`;
+          if (!grouped.has(key)) {
+            grouped.set(key, { itemName, department, machine, fields: [] });
+          }
+          grouped.get(key)!.fields.push({
+            fieldName,
+            fieldType,
+            unit,
+            lsl: isNaN(lslRaw) ? undefined : lslRaw,
+            usl: isNaN(uslRaw) ? undefined : uslRaw,
+            isSpecialCharacteristic: isSpecial,
+          });
+        }
+
+        if (!grouped.size) {
+          toast({ title: "Import Failed", description: "No valid rows found. Check column names match the template.", variant: "destructive" });
+          return;
+        }
+
+        setIsImporting(true);
+        let created = 0;
+        let failed = 0;
+
+        for (const entry of grouped.values()) {
+          try {
+            await api.post("/api/checksheets", {
+              itemName: entry.itemName,
+              department: entry.department,
+              machine: entry.machine,
+              measurementFields: entry.fields,
+            });
+            created++;
+          } catch {
+            failed++;
+          }
+        }
+
+        setIsImporting(false);
+        await fetchAllChecksheets();
+        if (selectedDepartment) handleDepartmentSelect(selectedDepartment);
+
+        toast({
+          title: "Import Complete",
+          description: `${created} check sheet(s) imported${failed ? `, ${failed} failed` : ""}.`,
+          variant: failed > 0 ? "destructive" : "default",
+        });
+      },
+      error: () => {
+        toast({ title: "Import Failed", description: "Could not parse CSV file.", variant: "destructive" });
+      },
+    });
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 justify-center">
       <Card className="shadow-lg w-full">
         <CardHeader>
-          <CardTitle>{editingSheetId !== null ? "Edit Check Sheet" : "Create New Check Sheet"}</CardTitle>
-          <CardDescription>
-            {editingSheetId !== null
-              ? "Modify the details of the existing check sheet."
-              : "Define a new item and its measurement parameters."}
-          </CardDescription>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <CardTitle>{editingSheetId !== null ? "Edit Check Sheet" : "Create New Check Sheet"}</CardTitle>
+              <CardDescription>
+                {editingSheetId !== null
+                  ? "Modify the details of the existing check sheet."
+                  : "Define a new item and its measurement parameters."}
+              </CardDescription>
+            </div>
+            {isManager && editingSheetId === null && (
+              <div className="flex gap-2 shrink-0">
+                <Button type="button" variant="outline" size="sm" onClick={downloadTemplate}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Template
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isImporting}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {isImporting ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="mr-2 h-4 w-4" />
+                  )}
+                  Import CSV
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={handleImportFile}
+                />
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <Form {...form}>

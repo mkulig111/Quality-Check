@@ -2,8 +2,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, Controller } from "react-hook-form";
 import { z } from "zod";
 import React from "react";
-import { Loader2, ChevronsRight, FilePenLine, Trash2, History } from "lucide-react";
+import { Loader2, ChevronsRight, FilePenLine, Trash2, History, Upload, Download } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import Papa from "papaparse";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +41,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 
 interface Checksheet {
   id: number;
@@ -77,12 +79,42 @@ const machineOptionsByDepartment: Record<string, string[]> = {
 const HISTORY_LIMIT = 10;
 const POLL_INTERVAL_MS = 10000;
 
+function downloadInspectionTemplate(checksheets: Checksheet[]) {
+  if (!checksheets.length) return;
+  const sample = checksheets[0];
+  const fieldNames = sample.measurementFields.map((f) => f.fieldName);
+  const headers = ["checksheet_name", "department", "machine", "timestamp", ...fieldNames];
+  const exampleValues = sample.measurementFields.map((f) => {
+    if (f.fieldType === "Numeric") return f.lsl !== undefined ? String(f.lsl) : "0";
+    if (f.fieldType === "Boolean") return "true";
+    return "OK";
+  });
+  const rows = [
+    headers,
+    [sample.itemName, sample.department, sample.machine, new Date().toISOString(), ...exampleValues],
+  ];
+  const csv = Papa.unparse(rows);
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "inspection_template.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function InspectionTab() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isManager = user?.role === "manager";
+
   const [isLoading, setIsLoading] = React.useState(false);
   const [isFetchingChecksheets, setIsFetchingChecksheets] = React.useState(true);
   const [measurementHistory, setMeasurementHistory] = React.useState<Measurement[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);
+  const [isImporting, setIsImporting] = React.useState(false);
+
+  const importFileRef = React.useRef<HTMLInputElement>(null);
 
   const [departments] = React.useState(["Stamping", "Injection", "Assembly", "Extrusion"]);
   const [allChecksheets, setAllChecksheets] = React.useState<Checksheet[]>([]);
@@ -269,18 +301,160 @@ export function InspectionTab() {
     form.reset({});
   };
 
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const rows = results.data;
+        if (!rows.length) {
+          toast({ title: "Import Failed", description: "CSV file is empty.", variant: "destructive" });
+          return;
+        }
+
+        setIsImporting(true);
+        let created = 0;
+        let failed = 0;
+        const errors: string[] = [];
+
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          const checksheetName = (row["checksheet_name"] || "").trim();
+          const department = (row["department"] || "").trim();
+          const machine = (row["machine"] || "").trim();
+          const timestampRaw = (row["timestamp"] || "").trim();
+
+          if (!checksheetName || !department || !machine) {
+            errors.push(`Row ${i + 2}: missing checksheet_name, department, or machine`);
+            failed++;
+            continue;
+          }
+
+          const checksheet = allChecksheets.find(
+            (cs) =>
+              cs.itemName === checksheetName &&
+              cs.department === department &&
+              cs.machine === machine,
+          );
+
+          if (!checksheet) {
+            errors.push(`Row ${i + 2}: no checksheet found for "${checksheetName}" / ${department} / ${machine}`);
+            failed++;
+            continue;
+          }
+
+          const measurements: Record<string, number | string | boolean> = {};
+          for (const field of checksheet.measurementFields) {
+            const rawVal = row[field.fieldName];
+            if (rawVal === undefined || rawVal === "") continue;
+            if (field.fieldType === "Numeric") {
+              const n = parseFloat(rawVal);
+              measurements[field.fieldName] = isNaN(n) ? 0 : n;
+            } else if (field.fieldType === "Boolean") {
+              measurements[field.fieldName] = rawVal.toLowerCase() === "true";
+            } else {
+              measurements[field.fieldName] = rawVal;
+            }
+          }
+
+          const timestamp = timestampRaw ? new Date(timestampRaw) : new Date();
+          if (isNaN(timestamp.getTime())) {
+            errors.push(`Row ${i + 2}: invalid timestamp "${timestampRaw}"`);
+            failed++;
+            continue;
+          }
+
+          try {
+            await api.post("/api/measurements", {
+              checksheetId: checksheet.id,
+              checksheetName: checksheet.itemName,
+              department: checksheet.department,
+              machine: checksheet.machine,
+              measurements,
+              issues: [],
+            });
+            created++;
+          } catch {
+            errors.push(`Row ${i + 2}: server error`);
+            failed++;
+          }
+        }
+
+        setIsImporting(false);
+        await fetchHistory();
+
+        if (errors.length > 0) {
+          console.warn("Inspection import errors:", errors);
+        }
+
+        toast({
+          title: "Import Complete",
+          description: `${created} record(s) imported${failed ? `, ${failed} failed` : ""}.`,
+          variant: failed > 0 && created === 0 ? "destructive" : "default",
+        });
+      },
+      error: () => {
+        setIsImporting(false);
+        toast({ title: "Import Failed", description: "Could not parse CSV file.", variant: "destructive" });
+      },
+    });
+  };
+
   return (
     <div className="space-y-6">
       <Card className="shadow-lg">
         <Form {...form}>
           <form onSubmit={form.handleSubmit(handleOpenConfirm)}>
             <CardHeader>
-              <CardTitle>{editingMeasurement ? "Edit Measurement" : "Inspection"}</CardTitle>
-              <CardDescription>
-                {editingMeasurement
-                  ? "Update the measurement details below."
-                  : "Select a department and check sheet, then enter measurements."}
-              </CardDescription>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <CardTitle>{editingMeasurement ? "Edit Measurement" : "Inspection"}</CardTitle>
+                  <CardDescription>
+                    {editingMeasurement
+                      ? "Update the measurement details below."
+                      : "Select a department and check sheet, then enter measurements."}
+                  </CardDescription>
+                </div>
+                {isManager && !editingMeasurement && (
+                  <div className="flex gap-2 shrink-0">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={allChecksheets.length === 0}
+                      onClick={() => downloadInspectionTemplate(allChecksheets)}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Template
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={isImporting || isFetchingChecksheets}
+                      onClick={() => importFileRef.current?.click()}
+                    >
+                      {isImporting ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="mr-2 h-4 w-4" />
+                      )}
+                      Import CSV
+                    </Button>
+                    <input
+                      ref={importFileRef}
+                      type="file"
+                      accept=".csv"
+                      className="hidden"
+                      onChange={handleImportFile}
+                    />
+                  </div>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
