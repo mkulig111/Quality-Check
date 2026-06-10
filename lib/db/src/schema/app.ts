@@ -36,7 +36,7 @@ export const auditsTable = pgTable("audits", {
   assigneeName: varchar("assignee_name", { length: 255 }),
   scheduledDate: timestamp("scheduled_date", { withTimezone: true }).notNull(),
   recurrence: varchar("recurrence", { enum: ["none", "daily", "weekly", "monthly"] }).notNull().default("none"),
-  status: varchar("status", { enum: ["pending", "completed"] }).notNull().default("pending"),
+  status: varchar("status", { enum: ["pending", "overdue", "completed"] }).notNull().default("pending"),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   createdBy: varchar("created_by").references(() => usersTable.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

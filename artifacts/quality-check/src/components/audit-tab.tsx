@@ -90,7 +90,7 @@ interface Audit {
   assigneeName: string | null;
   scheduledDate: string;
   recurrence: "none" | "daily" | "weekly" | "monthly";
-  status: "pending" | "completed";
+  status: "pending" | "overdue" | "completed";
   completedAt: string | null;
   createdAt: string;
 }
@@ -104,9 +104,7 @@ const auditFormSchema = z.object({
 });
 
 function getAuditStatus(audit: Audit): "pending" | "overdue" | "completed" {
-  if (audit.status === "completed") return "completed";
-  if (isPast(new Date(audit.scheduledDate))) return "overdue";
-  return "pending";
+  return audit.status;
 }
 
 function StatusBadge({ status }: { status: "pending" | "overdue" | "completed" }) {
@@ -287,9 +285,12 @@ export function AuditTab() {
   const selectedChecksheetId = form.watch("checksheetId");
   const selectedCs = checksheets.find((c) => c.id === Number(selectedChecksheetId));
 
-  const displayAudits = isManager ? audits : audits.filter(
-    (a) => a.status === "pending" && (a.assigneeId === user?.id || a.assigneeId === null)
-  );
+  const displayAudits = isManager ? audits : audits.filter((a) => {
+    const isAssignedToMe = a.assigneeId === user?.id;
+    const isUnassigned = a.assigneeId === null;
+    const isActionable = a.status !== "completed";
+    return (isAssignedToMe) || (isUnassigned && isActionable);
+  });
 
   return (
     <div className="space-y-6">

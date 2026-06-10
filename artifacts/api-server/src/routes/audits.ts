@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { db, auditsTable, measurementsTable, checksheetsTable } from "@workspace/db";
-import { eq, or, isNull, desc } from "drizzle-orm";
+import { db, auditsTable, measurementsTable } from "@workspace/db";
+import { eq, or, isNull, desc, and, lt } from "drizzle-orm";
 import { addDays, addWeeks, addMonths } from "date-fns";
 
 const router = Router();
@@ -22,9 +22,18 @@ function requireManager(req: any, res: any): boolean {
   return true;
 }
 
+async function markOverdueAudits() {
+  await db
+    .update(auditsTable)
+    .set({ status: "overdue" })
+    .where(and(eq(auditsTable.status, "pending"), lt(auditsTable.scheduledDate, new Date())));
+}
+
 router.get("/audits", async (req, res) => {
   if (!requireAuth(req, res)) return;
   try {
+    await markOverdueAudits();
+
     const userId = req.user.id;
     const role = req.user.role;
 
@@ -65,7 +74,7 @@ router.post("/audits", async (req, res) => {
       })
       .returning();
     res.status(201).json(row);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to create audit" });
   }
 });
@@ -113,7 +122,23 @@ router.post("/audits/:id/complete", async (req, res) => {
     const [audit] = await db.select().from(auditsTable).where(eq(auditsTable.id, id));
     if (!audit) { res.status(404).json({ error: "Audit not found" }); return; }
 
-    const inspector = req.user.email || req.user.firstName || req.user.id;
+    if (audit.status === "completed") {
+      res.status(409).json({ error: "Audit is already completed" });
+      return;
+    }
+
+    const role = req.user.role;
+    const userId = req.user.id;
+
+    if (role !== "manager") {
+      if (audit.assigneeId !== null && audit.assigneeId !== userId) {
+        res.status(403).json({ error: "This audit is assigned to a different inspector" });
+        return;
+      }
+    }
+
+    const isUnassignedClaim = audit.assigneeId === null && role === "inspector";
+    const inspector = req.user.firstName || req.user.username || req.user.id;
 
     await db
       .insert(measurementsTable)
@@ -129,7 +154,11 @@ router.post("/audits/:id/complete", async (req, res) => {
 
     await db
       .update(auditsTable)
-      .set({ status: "completed", completedAt: new Date() })
+      .set({
+        status: "completed",
+        completedAt: new Date(),
+        ...(isUnassignedClaim ? { assigneeId: userId, assigneeName: inspector } : {}),
+      })
       .where(eq(auditsTable.id, id));
 
     if (audit.recurrence !== "none") {
@@ -155,7 +184,7 @@ router.post("/audits/:id/complete", async (req, res) => {
     }
 
     res.json({ success: true });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to complete audit" });
   }
 });
