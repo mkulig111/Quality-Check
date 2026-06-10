@@ -46,17 +46,17 @@ function getBaseUrl(): string {
 }
 
 async function secureGet(key: string): Promise<string | null> {
-  if (Platform.OS === "web") return null;
+  if (Platform.OS === "web") return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
   return SecureStore.getItemAsync(key);
 }
 
 async function secureSet(key: string, value: string) {
-  if (Platform.OS === "web") return;
+  if (Platform.OS === "web") { if (typeof localStorage !== "undefined") localStorage.setItem(key, value); return; }
   await SecureStore.setItemAsync(key, value);
 }
 
 async function secureDel(key: string) {
-  if (Platform.OS === "web") return;
+  if (Platform.OS === "web") { if (typeof localStorage !== "undefined") localStorage.removeItem(key); return; }
   await SecureStore.deleteItemAsync(key);
 }
 
