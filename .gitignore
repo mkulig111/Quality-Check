@@ -40,6 +40,7 @@ next-env.d.ts
 .genkit/*
 .env*
 
-# firebase
+# firebase (sdk still used at runtime; cli/hosting files excluded)
 firebase-debug.log
 firestore-debug.log
+.firebaserc
