@@ -5,6 +5,7 @@ import checksheetsRouter from "./checksheets";
 import measurementsRouter from "./measurements";
 import usersRouter from "./users";
 import exportRouter from "./export";
+import auditsRouter from "./audits";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(checksheetsRouter);
 router.use(measurementsRouter);
 router.use(usersRouter);
 router.use(exportRouter);
+router.use(auditsRouter);
 
 export default router;

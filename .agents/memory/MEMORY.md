@@ -1,1 +1,2 @@
 - [Username/password auth](auth-migration.md) — OIDC removed; custom bcrypt login on both web and mobile; openid-client removed from package.json
+- [drizzle-kit-push-tty](drizzle-kit-push-tty.md) — drizzle-kit push fails non-interactively when existing table has a pending unique constraint; use direct SQL instead

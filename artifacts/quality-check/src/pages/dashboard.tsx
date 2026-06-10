@@ -5,6 +5,7 @@ import { SpcTab } from "@/components/spc-tab";
 import { InspectionTab } from "@/components/inspection-tab";
 import { ChecksheetTab } from "@/components/checksheet-tab";
 import { ExportTab } from "@/components/export-tab";
+import { AuditTab } from "@/components/audit-tab";
 import { useLocation } from "wouter";
 import { Header } from "@/components/header";
 import { Loader2 } from "lucide-react";
@@ -44,6 +45,7 @@ function DashboardTabs() {
           <TabsTrigger value="spc">SPC</TabsTrigger>
         )}
         <TabsTrigger value="inspection">Inspection</TabsTrigger>
+        <TabsTrigger value="audit">Audit</TabsTrigger>
         {role === "manager" && (
           <TabsTrigger value="export">Export</TabsTrigger>
         )}
@@ -66,6 +68,9 @@ function DashboardTabs() {
         )}
         <TabsContent value="inspection">
           <InspectionTab />
+        </TabsContent>
+        <TabsContent value="audit">
+          <AuditTab />
         </TabsContent>
         {role === "manager" && (
           <TabsContent value="export">
