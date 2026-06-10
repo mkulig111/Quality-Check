@@ -27,6 +27,16 @@ AI-powered quality control app for manufacturing inspection, SPC analysis, and d
 - `artifacts/quality-check/src/lib/firebase.ts` — Firebase config & exports
 - `artifacts/quality-check/src/index.css` — Theme (HSL CSS variables, pink/crimson primary)
 
+## Auth
+
+- Username/password auth — no Replit OIDC/SSO
+- `POST /api/auth/login` — bcrypt password check → returns `{ user, token: sid }` (web uses cookie, mobile uses Bearer token)
+- `POST /api/auth/logout` — clears session
+- `GET /api/auth/user` — returns current session user or null
+- Default admin account: username `admin`, password `Admin1234!` — change via Users tab after first login
+- Web: `artifacts/quality-check/src/lib/auth-context.tsx` — AuthProvider + useAuth() hook (replaces @workspace/replit-auth-web)
+- Mobile: `artifacts/quality-check-mobile/lib/auth.tsx` — simple username/password flow, stores token in SecureStore
+
 ## Architecture decisions
 
 - Firebase-only backend (no Postgres/Drizzle ORM used in this app)

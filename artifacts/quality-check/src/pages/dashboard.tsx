@@ -8,7 +8,7 @@ import { ExportTab } from "@/components/export-tab";
 import { useLocation } from "wouter";
 import { Header } from "@/components/header";
 import { Loader2 } from "lucide-react";
-import { useAuth } from "@workspace/replit-auth-web";
+import { useAuth } from "@/lib/auth-context";
 
 function DashboardTabs() {
   const [, navigate] = useLocation();

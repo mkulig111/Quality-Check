@@ -1,3 +1,1 @@
-- [Vite workspace lib resolution](vite-workspace-lib.md) — non-composite libs need Vite alias + fs.allow; removing tsconfig reference avoids composite/noEmit conflict
-- [AuthUser type location](authuser-type.md) — AuthUser must be defined in lib/api-zod/src/index.ts (not generated); used by api-server and replit-auth-web
-- [Session role field](session-role.md) — req.user.role requires role in sessionData.user at login time (auth.ts callback)
+- [Username/password auth](auth-migration.md) — OIDC removed; custom bcrypt login on both web and mobile; openid-client removed from package.json
