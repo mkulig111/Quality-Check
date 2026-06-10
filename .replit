@@ -11,6 +11,27 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "artifacts/quality-check-mobile: Expo Mobile App"
+
+[[workflows.workflow]]
+name = "artifacts/quality-check-mobile: Expo Mobile App"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/quality-check-mobile run dev"
+waitForPort = 8099
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
@@ -22,6 +43,10 @@ timeoutMs = 20000
 [[ports]]
 localPort = 8080
 externalPort = 8080
+
+[[ports]]
+localPort = 8099
+externalPort = 8099
 
 [[ports]]
 localPort = 20776

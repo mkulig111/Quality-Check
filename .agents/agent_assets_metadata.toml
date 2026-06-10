@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "3gScbQLC1-o7SZNBFvdgP"
+uri = "file://artifacts/quality-check-mobile/assets/images/icon.png"
+type = "image"
+title = "quality check mobile app icon"
