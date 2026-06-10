@@ -250,6 +250,7 @@ router.post(
           firstName: dbUser.firstName,
           lastName: dbUser.lastName,
           profileImageUrl: dbUser.profileImageUrl,
+          role: dbUser.role ?? undefined,
         },
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
