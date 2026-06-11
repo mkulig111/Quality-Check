@@ -11,8 +11,6 @@ RUN pnpm install --frozen-lockfile
 
 # ── Build frontend ─────────────────────────────────────────────────────────────
 FROM deps AS build-frontend
-ENV PORT=3000
-ENV BASE_PATH=/
 RUN pnpm --filter @workspace/quality-check run build
 
 # ── Build API ──────────────────────────────────────────────────────────────────
