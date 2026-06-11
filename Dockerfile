@@ -23,14 +23,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /app
 
-# API bundle (esbuild bundles all app deps)
-COPY --from=build-api /app/artifacts/api-server/dist ./dist
+# API bundle — keep original path so pino worker paths hardcoded at build time still resolve
+COPY --from=build-api /app/artifacts/api-server/dist ./artifacts/api-server/dist
 
 # Frontend static files — Express serves these at /*
-COPY --from=build-frontend /app/artifacts/quality-check/dist/public ./dist/public
+COPY --from=build-frontend /app/artifacts/quality-check/dist/public ./artifacts/api-server/dist/public
 
 # Migrations alongside the bundle so path.join(__dirname, "migrations") resolves correctly
-COPY lib/db/migrations ./dist/migrations
+COPY lib/db/migrations ./artifacts/api-server/dist/migrations
 
 EXPOSE 3000
-CMD ["node", "--enable-source-maps", "./dist/index.mjs"]
+CMD ["node", "--enable-source-maps", "./artifacts/api-server/dist/index.mjs"]
