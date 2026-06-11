@@ -23,22 +23,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /app
 
-# Minimal package.json so npm install resolves migrate.ts deps locally
-RUN echo '{"type":"module"}' > package.json
-RUN npm install tsx drizzle-orm pg
-
-# API bundle (esbuild bundles all app deps, only needs node itself)
+# API bundle (esbuild bundles all app deps)
 COPY --from=build-api /app/artifacts/api-server/dist ./dist
 
 # Frontend static files — Express serves these at /*
 COPY --from=build-frontend /app/artifacts/quality-check/dist/public ./dist/public
 
-# DB migrations — preserve relative path so migrate.ts resolves ../migrations correctly
-COPY lib/db/migrations ./migrations
-COPY lib/db/scripts/migrate.ts ./scripts/migrate.ts
-
-COPY start.sh ./start.sh
-RUN chmod +x ./start.sh
+# Migrations alongside the bundle so path.join(__dirname, "migrations") resolves correctly
+COPY lib/db/migrations ./dist/migrations
 
 EXPOSE 3000
-CMD ["./start.sh"]
+CMD ["node", "--enable-source-maps", "./dist/index.mjs"]
