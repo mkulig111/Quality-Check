@@ -11,7 +11,7 @@ export function getApiToken(): string | null {
 function getBaseUrl(): string {
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
   if (domain) return `https://${domain}`;
-  return "";
+  return "https://workspaceapi-server-production-5971.up.railway.app";
 }
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
