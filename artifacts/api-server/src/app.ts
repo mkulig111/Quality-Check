@@ -1,7 +1,7 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import pinoHttp from "pino-http";
+import pinoHttp, { type Options as PinoHttpOptions } from "pino-http";
 import path from "path";
 import { fileURLToPath } from "url";
 import router from "./routes";
@@ -10,25 +10,24 @@ import { authMiddleware } from "./middlewares/authMiddleware";
 
 const app: Express = express();
 
-app.use(
-  pinoHttp({
-    logger,
-    serializers: {
-      req(req) {
-        return {
-          id: req.id,
-          method: req.method,
-          url: req.url?.split("?")[0],
-        };
-      },
-      res(res) {
-        return {
-          statusCode: res.statusCode,
-        };
-      },
+const pinoHttpOptions: PinoHttpOptions = {
+  logger,
+  serializers: {
+    req(req) {
+      return {
+        id: req.id,
+        method: req.method,
+        url: req.url?.split("?")[0],
+      };
     },
-  }),
-);
+    res(res) {
+      return {
+        statusCode: res.statusCode,
+      };
+    },
+  },
+};
+app.use(pinoHttp(pinoHttpOptions));
 app.use(cors({ credentials: true, origin: true }));
 app.use(cookieParser());
 app.use(express.json());
