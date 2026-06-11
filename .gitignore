@@ -44,6 +44,22 @@ Thumbs.db
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
 
+
 # Replit
 .cache/
 .local/
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+.genkit/*
+.env*
+
+# firebase (sdk still used at runtime; cli/hosting files excluded)
+firebase-debug.log
+firestore-debug.log
+.firebaserc
