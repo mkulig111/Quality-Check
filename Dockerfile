@@ -32,5 +32,6 @@ COPY --from=build-frontend /app/artifacts/quality-check/dist/public ./artifacts/
 # Migrations alongside the bundle so path.join(__dirname, "migrations") resolves correctly
 COPY lib/db/migrations ./artifacts/api-server/dist/migrations
 
+ENV NODE_ENV=production
 EXPOSE 3000
 CMD ["node", "--enable-source-maps", "./artifacts/api-server/dist/index.mjs"]
