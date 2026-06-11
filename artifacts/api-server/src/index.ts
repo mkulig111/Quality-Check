@@ -1,7 +1,10 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { db, usersTable } from "@workspace/db";
+import { db, pool, usersTable } from "@workspace/db";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import bcrypt from "bcryptjs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const rawPort = process.env["PORT"];
 
@@ -15,6 +18,13 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+async function runMigrations() {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const migrationsFolder = path.join(__dirname, "migrations");
+  await migrate(db, { migrationsFolder });
+  logger.info("Migrations applied successfully");
 }
 
 async function seedAdminIfNeeded() {
@@ -42,12 +52,21 @@ async function seedAdminIfNeeded() {
   }
 }
 
-app.listen(port, async (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
+async function start() {
+  await runMigrations();
 
-  logger.info({ port }, "Server listening");
-  await seedAdminIfNeeded();
+  app.listen(port, async (err) => {
+    if (err) {
+      logger.error({ err }, "Error listening on port");
+      process.exit(1);
+    }
+
+    logger.info({ port }, "Server listening");
+    await seedAdminIfNeeded();
+  });
+}
+
+start().catch((err) => {
+  logger.error({ err }, "Startup failed");
+  process.exit(1);
 });
